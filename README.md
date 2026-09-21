@@ -99,13 +99,39 @@ If you don't need server-side storage, the original **single HTML file**
 as-is. But this backend version needs a host that runs Node (like the options above),
 because the API and database live on the server.
 
+## Google sign-in (optional)
+
+The app supports username/password accounts out of the box, plus
+"Continue with Google" via OAuth 2.0. Google sign-in only appears when the
+server is configured with a Google OAuth client — no credit card needed,
+Google Cloud OAuth clients are free.
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create
+   a project (free).
+2. **APIs & Services → OAuth consent screen**: choose *External*, fill in the
+   app name, and add your own Google account under *Test users*.
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**,
+   type *Web application*. Under **Authorized redirect URIs** add:
+   - `https://focus-desk-y1b9.onrender.com/api/auth/google/callback`
+   - `http://localhost:3000/api/auth/google/callback` (for local testing)
+4. Copy the **Client ID** and **Client secret** into the server's environment:
+   - Locally: `GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... node server.js`
+   - Render: Dashboard → your service → **Environment** → add
+     `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (Render redeploys
+     automatically).
+
+The first Google sign-in creates an account; if it's the very first account
+on the server it adopts any pre-existing data, same as username signup.
+Google-created accounts have no password and can only sign in via Google.
+
 ## Security notes
 
 - `helmet` security headers, including a strict CSP (only `'self'` + inline
   styles/scripts for the single-file frontend).
-- API rate limiting; JSON body size capped at 256 KB.
+- API rate limiting; JSON body size capped at 256 KB; stricter limits on auth
+  endpoints.
 - All inputs validated (lengths, id format, `YYYY-MM-DD` dates, enum modes).
+- Auth: username/password (scrypt-hashed) or Google OAuth (ID token signature
+  verified against Google's keys, CSRF state token, 15 s upstream timeouts).
+  Sessions are HTTP-only `SameSite=Lax` cookies, 30-day expiry.
 - Container runs as a non-root user; database lives on a mounted volume.
-- There is no login system — anyone with the URL can read/write the data. Fine for
-  personal use behind an unlisted URL; add auth (e.g. a reverse-proxy password) if
-  you expose it publicly.

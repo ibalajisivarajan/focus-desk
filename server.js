@@ -31,6 +31,13 @@ const useRemote = TURSO_URL.startsWith('libsql://') || TURSO_URL.startsWith('htt
 const SESSION_COOKIE = 'fd_session';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+/* Google OAuth ("Continue with Google"). Optional: only enabled when both
+   env vars are set. No API key costs — a free Google Cloud OAuth client. */
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const googleEnabled = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+const OAUTH_STATE_COOKIE = 'fd_oauth_state';
+
 /* ---------------- database ---------------- */
 let client;
 if (useRemote) {
@@ -114,6 +121,16 @@ async function initDb() {
   await client.execute('CREATE INDEX IF NOT EXISTS idx_habits_user ON habits(user_id)');
   await client.execute('CREATE INDEX IF NOT EXISTS idx_focus_user ON focus_sessions(user_id)');
 
+  // Google OAuth account linking (idempotent — safe to re-run).
+  for (const col of ['google_sub TEXT', 'email TEXT']) {
+    try {
+      await client.execute({ sql: `ALTER TABLE users ADD COLUMN ${col}`, args: [] });
+    } catch (e) {
+      if (!/duplicate column/i.test(String(e && e.message))) throw e;
+    }
+  }
+  await client.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)');
+
   await client.execute({ sql: 'INSERT OR IGNORE INTO notes (id, text, updated_at) VALUES (1, ?, ?)', args: ['', Date.now()] });
 }
 
@@ -195,7 +212,8 @@ async function createSession(req, res, userId) {
   // Opportunistic cleanup of expired sessions; never blocks login.
   run('DELETE FROM sessions WHERE expires_at < ?', now).catch(() => {});
   const secure = isSecureReq(req) ? '; Secure' : '';
-  res.setHeader('Set-Cookie',
+  // append (not set) so OAuth callback can clear its state cookie alongside.
+  res.append('Set-Cookie',
     `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`);
 }
 
@@ -227,6 +245,73 @@ function validName(v) {
 }
 function validPassword(v) {
   return typeof v === 'string' && v.length >= 8 && v.length <= 128;
+}
+
+// The very first account (username or Google) adopts any data created
+// before auth existed.
+async function adoptLegacyData(userId) {
+  for (const t of ['todos', 'habits', 'focus_sessions']) {
+    await run(`UPDATE ${t} SET user_id = ? WHERE user_id IS NULL`, userId);
+  }
+  const old = await get('SELECT text, updated_at FROM notes WHERE id = 1');
+  if (old && old.text) {
+    await run('INSERT OR IGNORE INTO user_notes (user_id, text, updated_at) VALUES (?,?,?)',
+      userId, old.text, old.updated_at);
+  }
+}
+
+/* ---------------- google oauth ---------------- */
+function googleRedirectUri(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || req.protocol;
+  return `${proto}://${req.headers.host}/api/auth/google/callback`;
+}
+
+let googleCertsCache = null; // { keys, fetchedAt }
+// fetch with a timeout so a hung upstream can't hang the callback request.
+async function fetchWithTimeout(url, opts = {}, ms = 15000) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: c.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+async function googleCerts() {
+  const now = Date.now();
+  if (googleCertsCache && now - googleCertsCache.fetchedAt < 60 * 60 * 1000) return googleCertsCache.keys;
+  const r = await fetchWithTimeout('https://www.googleapis.com/oauth2/v3/certs');
+  if (!r.ok) throw new Error('cert fetch failed');
+  const j = await r.json();
+  googleCertsCache = { keys: j.keys || [], fetchedAt: now };
+  return googleCertsCache.keys;
+}
+function b64urlToBuffer(s) {
+  s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return Buffer.from(s, 'base64');
+}
+// Verifies the ID token's RS256 signature against Google's published keys
+// and checks audience / issuer / expiry. Throws on anything suspicious.
+async function verifyGoogleIdToken(idToken) {
+  const parts = String(idToken).split('.');
+  if (parts.length !== 3) throw new Error('bad token shape');
+  const header = JSON.parse(b64urlToBuffer(parts[0]).toString('utf8'));
+  const payload = JSON.parse(b64urlToBuffer(parts[1]).toString('utf8'));
+  if (header.alg !== 'RS256') throw new Error('unexpected alg');
+  const jwk = (await googleCerts()).find((k) => k && k.kid === header.kid);
+  if (!jwk) throw new Error('unknown key id');
+  const pubKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+  const sigOk = crypto.verify('sha256', Buffer.from(parts[0] + '.' + parts[1]),
+    { key: pubKey, padding: crypto.constants.RSA_PKCS1_PADDING }, b64urlToBuffer(parts[2]));
+  if (!sigOk) throw new Error('bad signature');
+  if (payload.aud !== GOOGLE_CLIENT_ID) throw new Error('bad audience');
+  if (payload.iss !== 'https://accounts.google.com' && payload.iss !== 'accounts.google.com') {
+    throw new Error('bad issuer');
+  }
+  if (!payload.exp || payload.exp * 1000 < Date.now() - 30000) throw new Error('expired');
+  if (!payload.sub) throw new Error('no subject');
+  return payload;
 }
 
 /* ---------------- per-user queries ---------------- */
@@ -325,14 +410,7 @@ app.post('/api/auth/signup', authLimiter, ah(async (req, res) => {
     id, name, salt, hash, now);
   // The very first account adopts any data created before auth existed.
   if (Number((await get('SELECT COUNT(*) AS c FROM users')).c) === 1) {
-    for (const t of ['todos', 'habits', 'focus_sessions']) {
-      await run(`UPDATE ${t} SET user_id = ? WHERE user_id IS NULL`, id);
-    }
-    const old = await get('SELECT text, updated_at FROM notes WHERE id = 1');
-    if (old && old.text) {
-      await run('INSERT OR IGNORE INTO user_notes (user_id, text, updated_at) VALUES (?,?,?)',
-        id, old.text, old.updated_at);
-    }
+    await adoptLegacyData(id);
   }
   await createSession(req, res, id);
   res.status(201).json({ ok: true, user: { id, name } });
@@ -342,7 +420,8 @@ app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
   const b = bodyOf(req);
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   const u = name ? await get('SELECT id, name, pass_salt, pass_hash FROM users WHERE lower(name) = lower(?)', name) : null;
-  if (!u || !(await verifyPassword(b.password || '', u.pass_salt, u.pass_hash))) {
+  // Google-created accounts have no password — they can only sign in via Google.
+  if (!u || !u.pass_hash || !(await verifyPassword(b.password || '', u.pass_salt, u.pass_hash))) {
     return res.status(401).json({ error: 'invalid name or password' });
   }
   await createSession(req, res, u.id);
@@ -360,6 +439,86 @@ app.get('/api/auth/me', ah(async (req, res) => {
   const user = await sessionUser(req);
   if (!user) return res.status(401).json({ error: 'not signed in' });
   res.json({ user });
+}));
+
+// Which sign-in methods the server offers (lets the UI hide Google when unconfigured).
+app.get('/api/auth/providers', (req, res) => {
+  res.json({ google: googleEnabled });
+});
+
+// Step 1: redirect the browser to Google's consent screen.
+app.get('/api/auth/google', authLimiter, ah(async (req, res) => {
+  if (!googleEnabled) return res.status(503).json({ error: 'google sign-in is not configured' });
+  const state = crypto.randomBytes(16).toString('hex');
+  const secure = isSecureReq(req) ? '; Secure' : '';
+  res.append('Set-Cookie',
+    `${OAUTH_STATE_COOKIE}=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${secure}`);
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: googleRedirectUri(req),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    prompt: 'select_account',
+  });
+  res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString());
+}));
+
+// Step 2: Google redirects back here with an authorization code.
+app.get('/api/auth/google/callback', authLimiter, ah(async (req, res) => {
+  // The state cookie is single-use: clear it on every exit path.
+  res.append('Set-Cookie', `${OAUTH_STATE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  const fail = (reason) => res.redirect('/?auth_error=' + encodeURIComponent(reason));
+  if (!googleEnabled) return fail('not_configured');
+  const cookies = parseCookies(req);
+  if (!cookies[OAUTH_STATE_COOKIE] || !req.query.state || req.query.state !== cookies[OAUTH_STATE_COOKIE]) {
+    return fail('bad_state');
+  }
+  if (req.query.error) return fail('denied');
+  if (!req.query.code) return fail('no_code');
+
+  let payload;
+  try {
+    const tr = await fetchWithTimeout('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: String(req.query.code),
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: googleRedirectUri(req),
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tj = await tr.json();
+    if (!tr.ok || !tj.id_token) throw new Error('token exchange failed');
+    payload = await verifyGoogleIdToken(tj.id_token);
+  } catch (e) {
+    console.error('google oauth failed:', e.message);
+    return fail('exchange_failed');
+  }
+
+  const sub = String(payload.sub);
+  const email = typeof payload.email === 'string' ? payload.email : '';
+  let user = await get('SELECT id, name FROM users WHERE google_sub = ?', sub);
+  if (!user) {
+    // First Google sign-in: create an account (name from profile, deduped).
+    const base = (typeof payload.name === 'string' && payload.name.trim()) || email.split('@')[0] || 'user';
+    let gname = base.slice(0, 40);
+    for (let n = 1; await get('SELECT id FROM users WHERE lower(name) = lower(?)', gname); n++) {
+      gname = (base.slice(0, 36) + ' ' + n).slice(0, 40);
+    }
+    const id = uid();
+    const now = Date.now();
+    await run('INSERT INTO users (id, name, pass_salt, pass_hash, google_sub, email, created_at) VALUES (?,?,?,?,?,?,?)',
+      id, gname, '', '', sub, email, now);
+    if (Number((await get('SELECT COUNT(*) AS c FROM users')).c) === 1) {
+      await adoptLegacyData(id);
+    }
+    user = { id, name: gname };
+  }
+  await createSession(req, res, user.id);
+  res.redirect('/');
 }));
 
 // Everything below requires a signed-in user.
