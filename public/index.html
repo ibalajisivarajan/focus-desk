@@ -4,29 +4,48 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Focus Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#f4f1e9; --card:#fffdf8; --ink:#23201a; --muted:#8d8577;
-    --line:#e6dfcf; --accent:#b4552d; --accent-soft:#f3e2d4;
-    --green:#2f6b4f; --green-soft:#dfe9e1; --red:#b23c2e;
-    --shadow:0 1px 2px rgba(35,32,26,.05),0 8px 24px rgba(35,32,26,.06);
-    --radius:16px;
+    --bg:#faf7ff; --card:#ffffff; --ink:#211a35; --muted:#7c7492;
+    --line:#e9e1f6; --accent:#8b5cf6; --accent-soft:#f1e9fd;
+    --brand1:#ec4899; --brand2:#8b5cf6; --brand3:#3b82f6;
+    --gold1:#fbbf24; --gold2:#f97316;
+    --gradient:linear-gradient(135deg,#ec4899 0%,#8b5cf6 52%,#3b82f6 100%);
+    --gradient-warm:linear-gradient(135deg,#fbbf24,#f97316);
+    --green:#10b981; --green-soft:#d9f6e9; --red:#f43f5e;
+    --shadow:0 2px 6px rgba(33,26,53,.05),0 20px 48px -20px rgba(139,92,246,.28);
+    --radius:22px;
   }
   @media (prefers-color-scheme: dark){
     :root{
-      --bg:#14120e; --card:#201c16; --ink:#f1eadd; --muted:#a39a86;
-      --line:#383226; --accent:#e0814f; --accent-soft:#3a2a1e;
-      --green:#6fae8b; --green-soft:#233129; --red:#e07864;
-      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+      --bg:#110d1c; --card:#1b152b; --ink:#f3eefa; --muted:#9d94b8;
+      --line:#2d2544; --accent:#a78bfa; --accent-soft:#2a2140;
+      --green:#34d399; --green-soft:#173a2c; --red:#fb7185;
+      --shadow:0 2px 6px rgba(0,0,0,.35),0 20px 48px -20px rgba(139,92,246,.35);
     }
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html{-webkit-text-size-adjust:100%}
   body{
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--ink);
-    min-height:100vh;line-height:1.5;
-    background-image:radial-gradient(1200px 400px at 20% -80px,rgba(180,85,45,.08),transparent 60%);
+    min-height:100vh;line-height:1.55;
+    background-image:
+      radial-gradient(900px 480px at 12% -60px,rgba(236,72,153,.16),transparent 60%),
+      radial-gradient(820px 440px at 88% -40px,rgba(59,130,246,.15),transparent 60%),
+      radial-gradient(760px 560px at 50% 115%,rgba(139,92,246,.12),transparent 62%);
+    background-attachment:fixed;
+  }
+  @media (prefers-color-scheme: dark){
+    body{
+      background-image:
+        radial-gradient(900px 480px at 12% -60px,rgba(236,72,153,.10),transparent 60%),
+        radial-gradient(820px 440px at 88% -40px,rgba(59,130,246,.10),transparent 60%),
+        radial-gradient(760px 560px at 50% 115%,rgba(139,92,246,.10),transparent 62%);
+    }
   }
   .offline-banner{
     background:var(--red);color:#fff;text-align:center;font-size:13px;font-weight:600;
@@ -37,58 +56,86 @@
 
   /* Header / dashboard */
   header.dash{
-    display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;
-    margin-bottom:24px;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    margin-bottom:26px;
   }
+  .title{display:flex;align-items:center;gap:14px}
+  .brand{width:52px;height:52px;border-radius:16px;object-fit:cover;flex:none;
+    box-shadow:0 8px 20px -6px rgba(139,92,246,.55)}
   .title h1{
-    font-family:Georgia,"Times New Roman",serif;font-style:italic;font-weight:600;
-    font-size:clamp(28px,4vw,40px);letter-spacing:-.01em;
+    font-family:"Sora","Plus Jakarta Sans",sans-serif;font-weight:800;
+    font-size:clamp(28px,4vw,38px);letter-spacing:-.025em;line-height:1.1;
   }
-  .title h1 .dot{color:var(--accent);font-style:normal}
-  .title p{color:var(--muted);font-size:14px;margin-top:4px}
+  .title h1 .dot{
+    background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .title p{color:var(--muted);font-size:14px;margin-top:2px}
   .stats{display:flex;gap:10px;flex-wrap:wrap}
   .stat{
-    background:var(--card);border:1px solid var(--line);border-radius:12px;
-    padding:8px 14px;box-shadow:var(--shadow);text-align:center;min-width:86px;
+    background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:10px 16px;box-shadow:var(--shadow);text-align:center;min-width:92px;
+    position:relative;overflow:hidden;
   }
-  .stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
-  .stat span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .stat::before{
+    content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--gradient);
+  }
+  .stat b{
+    display:block;font-family:"Sora",sans-serif;font-size:22px;font-weight:700;
+    font-variant-numeric:tabular-nums;
+    background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .stat span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
 
   /* Grid */
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
   @media (max-width:760px){.grid{grid-template-columns:1fr}}
   .card{
     background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-    box-shadow:var(--shadow);padding:20px;display:flex;flex-direction:column;gap:14px;min-width:0;
+    box-shadow:var(--shadow);padding:22px;display:flex;flex-direction:column;gap:14px;min-width:0;
   }
-  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700}
-  .card h2 .emoji{margin-right:6px}
+  .card h2{
+    font-family:"Sora",sans-serif;font-size:16px;font-weight:700;letter-spacing:-.01em;
+    display:flex;align-items:center;gap:12px;
+  }
+  .card-art{
+    width:46px;height:46px;border-radius:14px;object-fit:cover;flex:none;
+    box-shadow:0 6px 14px -6px rgba(139,92,246,.5);
+  }
 
   /* Inputs & buttons */
   input[type=text],textarea{
     font:inherit;color:var(--ink);background:var(--bg);
-    border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;
+    border:1px solid var(--line);border-radius:14px;padding:11px 14px;width:100%;
+    transition:border-color .15s,box-shadow .15s;
   }
-  input[type=text]:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+  input[type=text]:focus,textarea:focus{
+    outline:none;border-color:var(--brand2);
+    box-shadow:0 0 0 3px rgba(139,92,246,.18);
+  }
   button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
   .btn{
-    background:var(--accent);color:#fff;font-weight:600;border-radius:10px;
-    padding:10px 16px;transition:transform .06s ease,opacity .15s;
+    background:var(--gradient);color:#fff;font-weight:700;border-radius:14px;
+    padding:11px 20px;transition:transform .08s ease,box-shadow .15s,filter .15s;
+    box-shadow:0 10px 22px -10px rgba(139,92,246,.65);
   }
+  .btn:hover{filter:brightness(1.06)}
   .btn:active{transform:scale(.97)}
-  .btn.ghost{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+  .btn.ghost{
+    background:var(--accent-soft);color:var(--ink);border:1px solid var(--line);box-shadow:none;
+  }
+  .btn.ghost:hover{background:var(--line)}
   .row{display:flex;gap:10px}
   .row input{flex:1}
 
   /* Todos */
   .todo-list{list-style:none;display:flex;flex-direction:column;gap:8px}
   .todo{
-    display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;
+    display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;
     border:1px solid transparent;transition:background .15s;
   }
-  .todo:hover{background:var(--bg)}
+  .todo:hover{background:var(--accent-soft)}
   .check{
-    width:22px;height:22px;border-radius:50%;border:2px solid var(--muted);
+    width:24px;height:24px;border-radius:50%;border:2px solid var(--muted);
     flex:none;display:grid;place-items:center;font-size:13px;color:#fff;transition:all .15s;
   }
   .todo.done .check{background:var(--green);border-color:var(--green)}
@@ -96,42 +143,46 @@
   .todo.done .text{color:var(--muted);text-decoration:line-through}
   .del{opacity:.35;font-size:16px;padding:4px 8px;border-radius:8px;line-height:1}
   .del:hover{opacity:1;background:var(--accent-soft)}
-  .empty{color:var(--muted);font-size:14px;text-align:center;padding:18px 8px;border:1px dashed var(--line);border-radius:10px}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:18px 8px;border:1px dashed var(--line);border-radius:14px}
 
   /* Habits */
   .habit{
     display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);
-    border-radius:12px;background:var(--bg);
+    border-radius:16px;background:var(--bg);
   }
   .habit-info{flex:1;min-width:0}
   .habit-info .name{font-weight:600;overflow-wrap:anywhere}
   .habit-info .streak{font-size:13px;color:var(--muted)}
-  .streak.on{color:var(--accent);font-weight:600}
+  .streak.on{color:var(--brand1);font-weight:700}
   .dots{display:flex;gap:4px;margin-top:6px}
   .dots i{width:10px;height:10px;border-radius:50%;background:var(--line)}
-  .dots i.hit{background:var(--green)}
-  .dots i.today{outline:2px solid var(--accent);outline-offset:1px}
+  .dots i.hit{background:var(--gradient)}
+  .dots i.today{outline:2px solid var(--brand2);outline-offset:1px}
   .habit-btn{
     width:44px;height:44px;border-radius:50%;border:2px solid var(--line);
     font-size:20px;flex:none;display:grid;place-items:center;transition:all .15s;background:var(--card);
   }
-  .habit-btn.hit{background:var(--green);border-color:var(--green);color:#fff}
+  .habit-btn.hit{background:var(--gradient);border-color:transparent;color:#fff}
 
   /* Timer */
   .timer-card{align-items:center;text-align:center}
   .modes{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
   .mode{
-    padding:8px 14px;border-radius:999px;border:1px solid var(--line);
-    font-size:13px;font-weight:600;color:var(--muted);background:var(--bg);transition:all .15s;
+    padding:8px 16px;border-radius:999px;border:1px solid var(--line);
+    font-size:13px;font-weight:700;color:var(--muted);background:var(--bg);transition:all .15s;
   }
-  .mode.active{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .mode.active{background:var(--gradient);color:#fff;border-color:transparent;
+    box-shadow:0 8px 18px -8px rgba(139,92,246,.6)}
   .ring-wrap{position:relative;width:220px;height:220px;margin:6px auto}
   .ring-wrap svg{transform:rotate(-90deg)}
   .ring-bg{stroke:var(--line)}
-  .ring-fg{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .4s linear}
+  .ring-fg{stroke-linecap:round;transition:stroke-dashoffset .4s linear}
   .ring-label{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center}
-  .ring-label time{font-size:46px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-  .ring-label small{color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-size:11px}
+  .ring-label time{
+    font-family:"Sora",sans-serif;font-size:46px;font-weight:700;
+    font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+  }
+  .ring-label small{color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:600}
   .timer-controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
   .timer-controls .btn{min-width:104px}
   .session-note{font-size:13px;color:var(--muted)}
@@ -153,31 +204,40 @@
   }
   .auth-overlay[hidden]{display:none}
   .auth-card{
-    background:var(--card);border:1px solid var(--line);border-radius:20px;
-    box-shadow:var(--shadow);padding:32px 28px;width:100%;max-width:380px;
+    background:var(--card);border:1px solid var(--line);border-radius:24px;
+    box-shadow:var(--shadow);padding:26px;width:100%;max-width:400px;
     display:flex;flex-direction:column;gap:12px;
   }
-  .auth-card h1{
-    font-family:Georgia,"Times New Roman",serif;font-style:italic;font-weight:600;
-    font-size:30px;letter-spacing:-.01em;text-align:center;
+  .auth-hero{
+    width:100%;height:168px;object-fit:cover;border-radius:16px;flex:none;
+    box-shadow:0 10px 24px -12px rgba(139,92,246,.5);
   }
-  .auth-card h1 .dot{color:var(--accent);font-style:normal}
+  .auth-card h1{
+    font-family:"Sora",sans-serif;font-weight:800;
+    font-size:30px;letter-spacing:-.02em;text-align:center;
+  }
+  .auth-card h1 .dot{
+    background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent;
+  }
   .auth-sub{text-align:center;color:var(--muted);font-size:14px;margin-top:-8px}
-  .auth-tabs{display:flex;background:var(--bg);border-radius:10px;padding:4px;margin:4px 0}
-  .auth-tab{flex:1;padding:8px;border-radius:8px;font-weight:600;font-size:14px;color:var(--muted)}
+  .auth-tabs{display:flex;background:var(--accent-soft);border-radius:14px;padding:4px;margin:4px 0}
+  .auth-tab{flex:1;padding:9px;border-radius:10px;font-weight:700;font-size:14px;color:var(--muted)}
   .auth-tab.active{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
   .auth-card input[type=text],.auth-card input[type=password],.auth-card input[type=email]{
     font:inherit;color:var(--ink);background:var(--bg);
-    border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;
+    border:1px solid var(--line);border-radius:14px;padding:11px 14px;width:100%;
+  }
+  .auth-card input[type=text]:focus,.auth-card input[type=password]:focus,.auth-card input[type=email]:focus{
+    outline:none;border-color:var(--brand2);box-shadow:0 0 0 3px rgba(139,92,246,.18);
   }
   .auth-error{
     background:var(--accent-soft);color:var(--red);font-size:13px;font-weight:600;
-    border-radius:10px;padding:10px 12px;
+    border-radius:14px;padding:10px 12px;
   }
   .auth-error[hidden]{display:none}
   .auth-ok{
     background:var(--green-soft);color:var(--green);font-size:13px;font-weight:600;
-    border-radius:10px;padding:10px 12px;
+    border-radius:14px;padding:10px 12px;
   }
   .auth-ok[hidden]{display:none}
   .field-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:4px 0 -8px}
@@ -190,7 +250,7 @@
   .flash{
     position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;
     background:var(--green-soft);color:var(--green);font-weight:600;font-size:14px;
-    padding:10px 18px;border-radius:12px;box-shadow:var(--shadow);max-width:90vw;text-align:center;
+    padding:10px 18px;border-radius:14px;box-shadow:var(--shadow);max-width:90vw;text-align:center;
   }
   .flash.err{background:var(--accent-soft);color:var(--red)}
   .auth-hint{text-align:center;color:var(--muted);font-size:12px}
@@ -199,7 +259,7 @@
   .auth-divider::before,.auth-divider::after{content:"";flex:1;height:1px;background:var(--line)}
   .google-btn{
     display:flex;align-items:center;justify-content:center;gap:10px;width:100%;
-    padding:11px 12px;border-radius:10px;border:1px solid var(--line);
+    padding:11px 12px;border-radius:14px;border:1px solid var(--line);
     background:#fff;color:#1f1f1f;font-size:15px;font-weight:600;cursor:pointer;
   }
   .google-btn[hidden]{display:none}
@@ -209,24 +269,30 @@
   /* Header user chip */
   .userbox{display:flex;align-items:center;gap:10px}
   .username{font-size:13px;color:var(--muted);font-weight:600}
-  .btn.small{padding:7px 12px;font-size:13px}
+  .btn.small{padding:8px 14px;font-size:13px}
 
   /* Weather */
   .weather-now{display:flex;align-items:center;gap:14px}
-  .weather-temp{font-size:40px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .weather-art{width:64px;height:64px;border-radius:18px;object-fit:cover;flex:none;
+    box-shadow:0 8px 18px -8px rgba(59,130,246,.55)}
+  .weather-temp{
+    font-family:"Sora",sans-serif;font-size:40px;font-weight:700;
+    font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+  }
   .weather-meta{min-width:0}
-  .weather-cond{font-weight:600}
+  .weather-cond{font-weight:700}
   .weather-hilo{font-size:13px;color:var(--muted)}
   .weather-loc{font-size:12px;color:var(--muted);margin-top:2px}
-  .weather-emoji{font-size:38px}
   .unit-toggle{font-size:12px;color:var(--muted);text-decoration:underline;padding:2px 4px}
 </style>
+
 </head>
 <body>
 <div class="offline-banner" id="offlineBanner" hidden><span></span></div>
 
 <div class="auth-overlay" id="authOverlay" hidden>
   <div class="auth-card">
+    <img class="auth-hero" src="img/hero.png" alt="A calm, organized desk">
     <h1>Focus Desk<span class="dot">.</span></h1>
     <div id="authView">
       <p class="auth-sub" id="authSub">Sign in to your desk</p>
@@ -283,6 +349,7 @@
 
   <header class="dash">
     <div class="title">
+      <img class="brand" src="img/logo.png" alt="Focus Desk logo">
       <h1>Focus Desk<span class="dot">.</span></h1>
       <p id="dateLine">—</p>
     </div>
@@ -301,7 +368,7 @@
   <main class="grid">
 
     <section class="card" aria-labelledby="h-todos">
-      <h2 id="h-todos"><span class="emoji">✓</span>To-dos</h2>
+      <h2 id="h-todos"><img class="card-art" src="img/img-tasks.png" alt="">To-dos</h2>
       <div class="row">
         <input type="text" id="todoInput" placeholder="Add a task…" maxlength="200" aria-label="New task">
         <button class="btn" id="todoAdd">Add</button>
@@ -310,7 +377,7 @@
     </section>
 
     <section class="card timer-card" aria-labelledby="h-timer">
-      <h2 id="h-timer"><span class="emoji">⏱</span>Focus timer</h2>
+      <h2 id="h-timer"><img class="card-art" src="img/img-timer.png" alt="">Focus timer</h2>
       <div class="modes" role="tablist" aria-label="Timer mode">
         <button class="mode active" data-mode="focus" role="tab">Focus · 25</button>
         <button class="mode" data-mode="short" role="tab">Break · 5</button>
@@ -318,9 +385,16 @@
       </div>
       <div class="ring-wrap" aria-live="polite">
         <svg width="220" height="220" viewBox="0 0 220 220">
+          <defs>
+            <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ec4899"/>
+              <stop offset=".52" stop-color="#8b5cf6"/>
+              <stop offset="1" stop-color="#3b82f6"/>
+            </linearGradient>
+          </defs>
           <circle class="ring-bg" cx="110" cy="110" r="100" fill="none" stroke-width="12"/>
           <circle class="ring-fg" id="ringFg" cx="110" cy="110" r="100" fill="none" stroke-width="12"
-                  stroke-dasharray="628.3" stroke-dashoffset="0"/>
+                  stroke="url(#ringGrad)" stroke-dasharray="628.3" stroke-dashoffset="0"/>
         </svg>
         <div class="ring-label">
           <time id="clock">25:00</time>
@@ -335,7 +409,7 @@
     </section>
 
     <section class="card" aria-labelledby="h-habits">
-      <h2 id="h-habits"><span class="emoji">🔥</span>Habits</h2>
+      <h2 id="h-habits"><img class="card-art" src="img/img-habits.png" alt="">Habits</h2>
       <div class="row">
         <input type="text" id="habitInput" placeholder="New habit, e.g. Read 20 min…" maxlength="80" aria-label="New habit">
         <button class="btn" id="habitAdd">Add</button>
@@ -344,15 +418,15 @@
     </section>
 
     <section class="card notes-card" aria-labelledby="h-notes">
-      <h2 id="h-notes"><span class="emoji">✎</span>Quick notes</h2>
+      <h2 id="h-notes"><img class="card-art" src="img/img-notes.png" alt="">Quick notes</h2>
       <textarea id="notes" placeholder="Jot anything down — it saves automatically." aria-label="Quick notes"></textarea>
       <div class="save-state" id="saveState"></div>
     </section>
 
     <section class="card" aria-labelledby="h-weather">
-      <h2 id="h-weather"><span class="emoji">☀️</span>Weather</h2>
+      <h2 id="h-weather"><img class="card-art" src="img/img-weather.png" alt="">Weather</h2>
       <div class="weather-now" id="weatherNow">
-        <span class="weather-emoji" id="weatherEmoji">🌤️</span>
+        <img class="weather-art" src="img/img-weather.png" alt="Weather">
         <div class="weather-meta">
           <div>
             <span class="weather-temp" id="weatherTemp">--</span>
@@ -366,7 +440,7 @@
       <div class="row">
         <input type="text" id="weatherCity" placeholder="City, e.g. Langley" maxlength="80" aria-label="City for weather">
         <button class="btn ghost" id="weatherSet">Set</button>
-        <button class="btn ghost" id="weatherLocate" aria-label="Use my location" title="Use my location">📍</button>
+        <button class="btn ghost" id="weatherLocate" aria-label="Use my location" title="Use my location">Locate</button>
       </div>
     </section>
 
@@ -654,8 +728,8 @@
       div.innerHTML =
         '<div class="habit-info">' +
           '<div class="name">' + esc(habit.name) + "</div>" +
-          '<div class="streak' + (streak > 0 ? " on" : "") + '">🔥 ' + streak +
-            (streak === 1 ? " day" : " days") + "</div>" +
+          '<div class="streak' + (streak > 0 ? " on" : "") + '">' + streak +
+            (streak === 1 ? " day" : " days") + " streak</div>" +
           '<div class="dots">' + dots + "</div>" +
         "</div>" +
         '<button class="habit-btn' + (done ? " hit" : "") + '" aria-label="Check off ' + esc(habit.name) + ' for today">' +
@@ -1130,16 +1204,16 @@
   var WCFG_KEY = "focusdesk:weather";
   var WDATA_KEY = "focusdesk:weather:data";
   var WMO = {
-    0: ["☀️", "Clear sky"], 1: ["🌤️", "Mainly clear"], 2: ["⛅", "Partly cloudy"],
-    3: ["☁️", "Overcast"], 45: ["🌫️", "Fog"], 48: ["🌫️", "Icy fog"],
-    51: ["🌦️", "Light drizzle"], 53: ["🌦️", "Drizzle"], 55: ["🌧️", "Drizzle"],
-    56: ["🌧️", "Freezing drizzle"], 57: ["🌧️", "Freezing drizzle"],
-    61: ["🌧️", "Light rain"], 63: ["🌧️", "Rain"], 65: ["🌧️", "Heavy rain"],
-    66: ["🌧️", "Freezing rain"], 67: ["🌧️", "Freezing rain"],
-    71: ["🌨️", "Light snow"], 73: ["🌨️", "Snow"], 75: ["❄️", "Heavy snow"],
-    77: ["🌨️", "Snow grains"], 80: ["🌦️", "Light showers"], 81: ["🌧️", "Showers"],
-    82: ["⛈️", "Violent showers"], 85: ["🌨️", "Snow showers"], 86: ["🌨️", "Snow showers"],
-    95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Storm with hail"], 99: ["⛈️", "Storm with hail"]
+    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy",
+    3: "Overcast", 45: "Fog", 48: "Icy fog",
+    51: "Light drizzle", 53: "Drizzle", 55: "Drizzle",
+    56: "Freezing drizzle", 57: "Freezing drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain",
+    66: "Freezing rain", 67: "Freezing rain",
+    71: "Light snow", 73: "Snow", 75: "Heavy snow",
+    77: "Snow grains", 80: "Light showers", 81: "Showers",
+    82: "Violent showers", 85: "Snow showers", 86: "Snow showers",
+    95: "Thunderstorm", 96: "Storm with hail", 99: "Storm with hail"
   };
 
   function defaultUnit(){
@@ -1160,17 +1234,16 @@
     if(!d){
       document.getElementById("weatherTemp").textContent = "--";
       document.getElementById("weatherCond").textContent =
-        cfg.lat === null ? "Tap 📍 or set a city below" : "Unavailable — check connection";
+        cfg.lat === null ? "Tap Locate or set a city below" : "Unavailable — check connection";
       document.getElementById("weatherHilo").textContent = "";
       document.getElementById("weatherLoc").textContent = cfg.label || "";
       return;
     }
     var cur = d.current || {};
     var daily = d.daily || {};
-    var w = WMO[cur.weather_code] || ["🌤️", ""];
-    document.getElementById("weatherEmoji").textContent = w[0];
+    var w = WMO[cur.weather_code] || "";
     document.getElementById("weatherTemp").textContent = Math.round(cur.temperature_2m) + "°";
-    document.getElementById("weatherCond").textContent = w[1];
+    document.getElementById("weatherCond").textContent = w;
     var hi = daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[0]) : null;
     var lo = daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[0]) : null;
     document.getElementById("weatherHilo").textContent =
