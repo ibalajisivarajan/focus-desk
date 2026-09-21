@@ -235,19 +235,45 @@
   .username{font-size:13px;color:var(--muted);font-weight:600}
   .btn.small{padding:8px 14px;font-size:13px}
 
-  /* Weather */
-  .weather-now{display:flex;align-items:center;gap:14px}
-  .weather-art{width:64px;height:64px;border-radius:16px;object-fit:cover;flex:none;
-    border:1px solid var(--line)}
-  .weather-temp{
-    font-family:"Baloo 2","Inter",sans-serif;font-size:40px;font-weight:700;
-    font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:var(--ink);
+  /* Header weather (compact line under the date) */
+  .title-text{min-width:0}
+  .weather-line{
+    display:inline-flex;align-items:center;gap:6px;max-width:100%;
+    font-size:13px;color:var(--muted);font-weight:500;text-align:left;
+    padding:3px 0;margin-top:2px;
   }
-  .weather-meta{min-width:0}
-  .weather-cond{font-weight:700}
-  .weather-hilo{font-size:13px;color:var(--muted)}
-  .weather-loc{font-size:12px;color:var(--muted);margin-top:2px}
-  .unit-toggle{font-size:12px;color:var(--muted);text-decoration:underline;padding:2px 4px}
+  .weather-line:hover{color:var(--ink)}
+  .weather-line-icon{width:18px;height:18px;border-radius:6px;object-fit:cover;flex:none}
+  #weatherLineText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .weather-lines{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
+  .weather-lines>span{min-width:0;max-width:100%}
+  .weather-loc-line{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .weather-edit{display:flex;gap:8px;margin-top:8px;max-width:380px}
+  .weather-edit[hidden]{display:none}
+  .weather-edit input{flex:1;min-width:0;font-size:13px;padding:8px 12px}
+  .weather-edit .btn.small{white-space:nowrap}
+  .unit-toggle{font-size:12px;color:var(--muted);text-decoration:underline;padding:6px 4px;white-space:nowrap;align-self:center}
+
+  /* Header menu (⋯) */
+  .userbox{position:relative}
+  .menu-wrap{position:relative}
+  .menu-btn{
+    width:38px;height:38px;border-radius:12px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);font-size:18px;line-height:1;
+    display:grid;place-items:center;
+  }
+  .menu-btn:hover{background:var(--accent-soft)}
+  .menu{
+    position:absolute;right:0;top:calc(100% + 6px);z-index:60;min-width:150px;
+    background:#fff;border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);padding:6px;display:flex;flex-direction:column;gap:2px;
+  }
+  .menu[hidden]{display:none}
+  .menu button{
+    text-align:left;padding:10px 12px;border-radius:8px;
+    font-size:14px;font-weight:600;color:var(--ink);
+  }
+  .menu button:hover{background:var(--accent-soft)}
 
 </style>
 
@@ -320,18 +346,38 @@
   <header class="dash">
     <div class="title">
       <img class="brand" src="img/logo.png" alt="Focus Desk logo">
-      <h1>Focus Desk<span class="dot">.</span></h1>
-      <p id="dateLine">—</p>
+      <div class="title-text">
+        <h1>Focus Desk<span class="dot">.</span></h1>
+        <p id="dateLine">—</p>
+        <button class="weather-line" id="weatherLine" aria-expanded="false" aria-controls="weatherEdit">
+          <img class="weather-line-icon" src="img/img-weather.png" alt="">
+          <span class="weather-lines">
+            <span id="weatherLineText">Locating…</span>
+            <span id="weatherLocLine" class="weather-loc-line" hidden></span>
+          </span>
+        </button>
+        <div class="weather-edit" id="weatherEdit" hidden>
+          <input type="text" id="weatherCity" placeholder="City, e.g. Langley" maxlength="80" aria-label="City for weather">
+          <button class="btn ghost small" id="weatherSet">Set</button>
+          <button class="btn ghost small" id="weatherLocate" aria-label="Use my location" title="Use my location">Locate</button>
+          <button class="unit-toggle" id="unitToggle" aria-label="Toggle temperature unit">°F</button>
+        </div>
+      </div>
     </div>
     <div class="stats" aria-label="Today's summary">
       <div class="stat"><b id="statTasks">0</b><span>tasks done</span></div>
       <div class="stat"><b id="statHabits">0</b><span>habits checked</span></div>
       <div class="stat"><b id="statFocus">0</b><span>min focused</span></div>
     </div>
-    <div class="userbox">
+    <div class="userbox" id="userbox">
       <span class="username" id="userName"></span>
-      <button class="btn ghost small" id="profileBtn">Profile</button>
-      <button class="btn ghost small" id="signOut">Sign out</button>
+      <div class="menu-wrap">
+        <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-haspopup="menu" aria-expanded="false">⋯</button>
+        <div class="menu" id="menu" role="menu" hidden>
+          <button id="profileBtn" role="menuitem">Profile</button>
+          <button id="signOut" role="menuitem">Sign out</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -384,27 +430,6 @@
       <h2 id="h-notes"><img class="card-art" src="img/img-notes.png" alt="">Quick notes</h2>
       <textarea id="notes" placeholder="Jot anything down — it saves automatically." aria-label="Quick notes"></textarea>
       <div class="save-state" id="saveState"></div>
-    </section>
-
-    <section class="card" aria-labelledby="h-weather">
-      <h2 id="h-weather"><img class="card-art" src="img/img-weather.png" alt="">Weather</h2>
-      <div class="weather-now" id="weatherNow">
-        <img class="weather-art" src="img/img-weather.png" alt="Weather">
-        <div class="weather-meta">
-          <div>
-            <span class="weather-temp" id="weatherTemp">--</span>
-            <button class="unit-toggle" id="unitToggle" aria-label="Toggle temperature unit">°C</button>
-          </div>
-          <div class="weather-cond" id="weatherCond">Locating…</div>
-          <div class="weather-hilo" id="weatherHilo"></div>
-          <div class="weather-loc" id="weatherLoc"></div>
-        </div>
-      </div>
-      <div class="row">
-        <input type="text" id="weatherCity" placeholder="City, e.g. Langley" maxlength="80" aria-label="City for weather">
-        <button class="btn ghost" id="weatherSet">Set</button>
-        <button class="btn ghost" id="weatherLocate" aria-label="Use my location" title="Use my location">Locate</button>
-      </div>
     </section>
 
   </main>
@@ -1121,27 +1146,14 @@
   document.getElementById("forgotBack").addEventListener("click", function(){ setAuthMode("signin"); });
   document.getElementById("forgotGo").addEventListener("click", submitForgot);
   document.getElementById("forgotEmail").addEventListener("keydown", function(e){ if(e.key === "Enter") submitForgot(); });
-  document.getElementById("profileBtn").addEventListener("click", function(){ openProfile(); });
-  document.getElementById("profileClose").addEventListener("click", closeProfile);
-  document.getElementById("profileSave").addEventListener("click", submitProfile);
-  document.getElementById("resendVerify").addEventListener("click", function(){
-    var btn = document.getElementById("resendVerify");
-    var msg = document.getElementById("resendMsg");
-    msg.hidden = true;
-    btn.disabled = true;
-    fetch("/api/auth/resend-verification", { method: "POST", credentials: "same-origin" })
-      .then(function(res){ return res.json(); })
-      .then(function(){
-        btn.disabled = false;
-        msg.textContent = "If your email is still unverified, a new verification email is on its way — check your inbox (and spam).";
-        msg.hidden = false;
-      }).catch(function(){
-        btn.disabled = false;
-        msg.textContent = "Couldn't reach the server — try again.";
-        msg.hidden = false;
-      });
-  });
-  document.getElementById("signOut").addEventListener("click", function(){
+  /* ---------- header menu (⋯) ---------- */
+  var menuBtn = document.getElementById("menuBtn");
+  var menuEl = document.getElementById("menu");
+  function setMenu(open){
+    menuEl.hidden = !open;
+    menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  function doSignOut(){
     fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).then(function(){
       setUser(null);
       try{ localStorage.removeItem(CACHE_KEY); }catch(e){}
@@ -1149,7 +1161,79 @@
       showAuth();
       setAuthMode("signin");
     }, function(){});
+  }
+  menuBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    setMenu(menuEl.hidden);
   });
+  document.addEventListener("click", function(e){
+    if(!menuEl.hidden){
+      var ub = document.getElementById("userbox");
+      if(ub && !ub.contains(e.target)) setMenu(false);
+    }
+  });
+  document.addEventListener("keydown", function(e){
+    if(e.key === "Escape") setMenu(false);
+  });
+
+  document.getElementById("profileBtn").addEventListener("click", function(){ setMenu(false); openProfile(); });
+  document.getElementById("profileClose").addEventListener("click", closeProfile);
+  document.getElementById("profileSave").addEventListener("click", submitProfile);
+  // Resend verification: instant "Sending…" feedback so the tap is never a
+  // dead end, a 25s client timeout so a slow mail server can't wedge the
+  // button, and honest sent/failed messaging from the server's emailSent flag.
+  document.getElementById("resendVerify").addEventListener("click", function(){
+    var btn = document.getElementById("resendVerify");
+    var msg = document.getElementById("resendMsg");
+    var LABEL = "Resend verification email";
+    function showMsg(kind, text){
+      msg.className = kind;
+      msg.style.marginTop = "4px";
+      msg.textContent = text;
+      msg.hidden = false;
+    }
+    function finish(kind, text){
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      btn.disabled = false;
+      btn.textContent = LABEL;
+      showMsg(kind, text);
+    }
+    var done = false;
+    msg.hidden = true;
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+    var ctl = null;
+    try{ ctl = new AbortController(); }catch(e){ ctl = null; }
+    var timer = setTimeout(function(){
+      if(ctl){ try{ ctl.abort(); }catch(e){} }
+      finish("auth-error",
+        "Still sending — the mail server is slow. Check your inbox and spam in a minute, or tap again to retry.");
+    }, 25000);
+    fetch("/api/auth/resend-verification", {
+      method: "POST",
+      credentials: "same-origin",
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(res){
+      return res.text().then(function(t){
+        var bd = null;
+        try{ bd = JSON.parse(t); }catch(e){}
+        return { status: res.status, body: bd };
+      });
+    }).then(function(r){
+      if(r.status === 200 && r.body && r.body.ok && r.body.emailSent){
+        finish("auth-ok", "Verification email sent — check your inbox and spam.");
+      } else if(r.status === 429){
+        finish("auth-error", "Too many attempts — wait a little and try again.");
+      } else {
+        finish("auth-error", "The email couldn't be sent right now — try again in a bit.");
+      }
+    }).catch(function(){
+      finish("auth-error", "Couldn't reach the server — check your connection and try again.");
+    });
+  });
+  document.getElementById("signOut").addEventListener("click", function(){ setMenu(false); doSignOut(); });
 
   /* ---------- google sign-in ---------- */
   // Surface OAuth errors the server redirected back with (/?auth_error=...).
@@ -1201,6 +1285,9 @@
     95: "Thunderstorm", 96: "Storm with hail", 99: "Storm with hail"
   };
 
+  var lastWeatherD = null;   // last Open-Meteo payload (drives the per-minute local clock)
+  var lastWeatherCfg = null;
+
   function defaultUnit(){
     return (navigator.language || "en").toLowerCase() === "en-us" ? "fahrenheit" : "celsius";
   }
@@ -1213,27 +1300,68 @@
   }
   function setWcfg(c){ try{ localStorage.setItem(WCFG_KEY, JSON.stringify(c)); }catch(e){} }
 
+  function setWeatherLine(text){
+    document.getElementById("weatherLineText").textContent = text;
+  }
+  function setWeatherLocLine(text){
+    var el = document.getElementById("weatherLocLine");
+    el.textContent = text || "";
+    el.hidden = !text;
+  }
+
+  // "America/Vancouver" -> "Vancouver" (fallback place label from the timezone)
+  function tzLabel(tz){
+    if(!tz || tz.indexOf("/") === -1) return "";
+    var parts = tz.split("/");
+    return parts[parts.length - 1].replace(/_/g, " ");
+  }
+
+  // Location's local time from Open-Meteo's utc_offset_seconds, e.g. "9:32 AM"
+  function locLocalTime(offsetSec){
+    if(typeof offsetSec !== "number") return "";
+    var d = new Date(Date.now() + offsetSec * 1000);
+    try{
+      return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" });
+    }catch(e){
+      var h = d.getUTCHours(), m = d.getUTCMinutes();
+      var ap = h >= 12 ? "PM" : "AM";
+      h = h % 12; if(h === 0) h = 12;
+      return h + ":" + (m < 10 ? "0" : "") + m + " " + ap;
+    }
+  }
+
+  // Line 2 under the date: "Langley, Canada · 9:32 AM local". Refreshed every minute.
+  function refreshLocLine(){
+    if(!lastWeatherD || !lastWeatherCfg || lastWeatherCfg.lat === null){
+      setWeatherLocLine("");
+      return;
+    }
+    var label = lastWeatherCfg.label || tzLabel(lastWeatherD.timezone) || "Current location";
+    var t = locLocalTime(lastWeatherD.utc_offset_seconds);
+    setWeatherLocLine(label + (t ? " · " + t + " local" : ""));
+  }
+
   function renderWeather(d, cfg){
-    var unitSym = cfg.unit === "fahrenheit" ? "°F" : "°C";
-    document.getElementById("unitToggle").textContent = unitSym;
+    lastWeatherD = d || null;
+    lastWeatherCfg = cfg;
+    var toggle = document.getElementById("unitToggle");
+    if(toggle) toggle.textContent = cfg.unit === "fahrenheit" ? "°F" : "°C";
     if(!d){
-      document.getElementById("weatherTemp").textContent = "--";
-      document.getElementById("weatherCond").textContent =
-        cfg.lat === null ? "Tap Locate or set a city below" : "Unavailable — check connection";
-      document.getElementById("weatherHilo").textContent = "";
-      document.getElementById("weatherLoc").textContent = cfg.label || "";
+      setWeatherLine(cfg.lat === null ? "Set location for weather" : "Weather unavailable");
+      setWeatherLocLine("");
       return;
     }
     var cur = d.current || {};
     var daily = d.daily || {};
     var w = WMO[cur.weather_code] || "";
-    document.getElementById("weatherTemp").textContent = Math.round(cur.temperature_2m) + "°";
-    document.getElementById("weatherCond").textContent = w;
+    var unitSym = cfg.unit === "fahrenheit" ? "°F" : "°C";
+    var parts = [Math.round(cur.temperature_2m) + unitSym];
+    if(w) parts.push(w);
     var hi = daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[0]) : null;
     var lo = daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[0]) : null;
-    document.getElementById("weatherHilo").textContent =
-      (hi !== null && lo !== null) ? "H " + hi + "°  ·  L " + lo + "°" : "";
-    document.getElementById("weatherLoc").textContent = cfg.label || "";
+    if(hi !== null && lo !== null) parts.push("H " + hi + "° L " + lo + "°");
+    setWeatherLine(parts.join(" · "));
+    refreshLocLine();
   }
 
   function fetchWeather(){
@@ -1257,28 +1385,51 @@
   }
 
   function locateWeather(){
-    document.getElementById("weatherCond").textContent = "Locating…";
+    setWeatherLine("Locating…");
+    setWeatherLocLine("");
     if(!("geolocation" in navigator)){
-      document.getElementById("weatherCond").textContent = "Geolocation not available — enter a city.";
+      setWeatherLine("Geolocation not available — set a city");
+      toggleWeatherEdit(true);
       return;
     }
     navigator.geolocation.getCurrentPosition(function(pos){
       var cfg = getWcfg();
       cfg.lat = pos.coords.latitude;
       cfg.lon = pos.coords.longitude;
-      cfg.label = "Current location";
+      cfg.label = ""; // resolved below: reverse-geocode, else timezone label
       setWcfg(cfg);
+      reverseLabel(cfg.lat, cfg.lon);
       fetchWeather();
     }, function(){
-      document.getElementById("weatherCond").textContent = "Location blocked — enter a city below.";
+      setWeatherLine("Location blocked — set a city");
+      toggleWeatherEdit(true);
     }, { timeout: 10000 });
+  }
+
+  // Best-effort reverse geocode (free, no key) so the header can show a real
+  // place name for geolocated weather instead of "Current location".
+  function reverseLabel(lat, lon){
+    fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=" + lat +
+      "&longitude=" + lon + "&localityLanguage=en")
+      .then(function(res){ return res.json(); })
+      .then(function(d){
+        var name = d && (d.city || d.locality || d.principalSubdivision);
+        if(!name) return;
+        var cfg = getWcfg();
+        if(cfg.lat === lat && cfg.lon === lon && !cfg.label){
+          cfg.label = name;
+          setWcfg(cfg);
+          refreshLocLine();
+        }
+      }).catch(function(){});
   }
 
   function setWeatherCity(){
     var input = document.getElementById("weatherCity");
     var q = input.value.trim();
     if(!q) return;
-    document.getElementById("weatherCond").textContent = "Searching…";
+    setWeatherLine("Searching…");
+    setWeatherLocLine("");
     fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(q) +
       "&count=1&language=en&format=json").then(function(res){
       if(!res.ok) throw new Error("bad geocode status");
@@ -1292,11 +1443,21 @@
       cfg.label = r.name + (r.country ? ", " + r.country : "");
       setWcfg(cfg);
       input.value = "";
+      toggleWeatherEdit(false);
       fetchWeather();
     }).catch(function(){
-      document.getElementById("weatherCond").textContent = "City not found — try another.";
+      setWeatherLine("City not found — try another.");
     });
   }
+
+  var weatherLine = document.getElementById("weatherLine");
+  var weatherEdit = document.getElementById("weatherEdit");
+  function toggleWeatherEdit(force){
+    var show = typeof force === "boolean" ? force : weatherEdit.hidden;
+    weatherEdit.hidden = !show;
+    weatherLine.setAttribute("aria-expanded", show ? "true" : "false");
+  }
+  weatherLine.addEventListener("click", function(){ toggleWeatherEdit(); });
 
   document.getElementById("weatherSet").addEventListener("click", setWeatherCity);
   document.getElementById("weatherCity").addEventListener("keydown", function(e){ if(e.key === "Enter") setWeatherCity(); });
@@ -1307,6 +1468,7 @@
     setWcfg(cfg);
     fetchWeather();
   });
+  setInterval(refreshLocLine, 60 * 1000);
 
   /* ---------- boot ---------- */
   function boot(){

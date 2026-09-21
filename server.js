@@ -644,15 +644,16 @@ app.post('/api/auth/resend-verification', authLimiter, ah(async (req, res) => {
   const user = await sessionUser(req);
   if (!user) return res.status(401).json({ error: 'not signed in' });
   const full = await get('SELECT id, name, email, email_verified FROM users WHERE id = ?', user.id);
+  let emailSent = false;
   if (emailEnabled && full && full.email && !full.email_verified && emailThrottleOk('verify:' + full.email)) {
     const { token, tokenHash } = newEmailToken();
     await run('DELETE FROM email_verifications WHERE user_id = ?', full.id);
     await run('INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES (?,?,?)',
       tokenHash, full.id, Date.now() + 24 * 3600 * 1000);
     const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${token}`;
-    await sendMail(full.email, 'Verify your Focus Desk email', verificationEmailBody(full.name, link));
+    emailSent = await sendMail(full.email, 'Verify your Focus Desk email', verificationEmailBody(full.name, link));
   }
-  res.json({ ok: true });
+  res.json({ ok: true, emailSent });
 }));
 
 app.get('/api/auth/me', ah(async (req, res) => {
