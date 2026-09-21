@@ -928,7 +928,9 @@
     var go = document.getElementById("authGo");
     go.disabled = true;
     go.textContent = "One moment…";
-    fetch("/api/auth/" + authMode, {
+    // The server route for signing in is /api/auth/login, not /api/auth/signin.
+    var endpoint = authMode === "signin" ? "login" : "signup";
+    fetch("/api/auth/" + endpoint, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
