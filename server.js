@@ -310,8 +310,26 @@ function getMailTransport() {
     port: 465,
     secure: true,
     auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD },
+    // Fail fast instead of hanging: the resend endpoint must answer honestly.
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
   return mailTransport;
+}
+// Sanitized error category for email failures — a fixed category string only,
+// never credential values. Also redacts email addresses from messages.
+function emailErrorCategory(e) {
+  const raw = String((e && (e.code || e.message)) || '');
+  const msg = raw.toLowerCase();
+  if (/eauth|invalid login|\b535\b|\b534\b|password not accepted|app passwords/i.test(msg)) return 'auth';
+  if (/timed? ?out|etimedout|esockettimedout/i.test(msg)) return 'timeout';
+  if (/econnrefused|econnreset|econnaborted|enotfound|eai_again|esocket|ehostunreach|enetunreach/i.test(msg)) return 'connection';
+  return 'error';
+}
+function sanitizedMailError(e) {
+  return String((e && (e.code || e.message)) || 'unknown')
+    .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[redacted]');
 }
 // Returns true when the email was handed off (sent or logged), false when
 // email isn't configured or delivery failed. Never throws.
@@ -327,7 +345,7 @@ async function sendMail(to, subject, text) {
       return true;
     }
   } catch (e) {
-    console.error('sendMail failed:', e && e.message);
+    console.error('sendMail failed:', emailErrorCategory(e), '-', sanitizedMailError(e));
   }
   return false;
 }
@@ -654,6 +672,28 @@ app.post('/api/auth/resend-verification', authLimiter, ah(async (req, res) => {
     emailSent = await sendMail(full.email, 'Verify your Focus Desk email', verificationEmailBody(full.name, link));
   }
   res.json({ ok: true, emailSent });
+}));
+
+// Authenticated SMTP self-diagnostic. Returns booleans plus a sanitized error
+// category only — never credential values. Lets the signed-in user check
+// whether the mail server is reachable from the host.
+app.get('/api/diag/email', ah(async (req, res) => {
+  const user = await sessionUser(req);
+  if (!user) return res.status(401).json({ error: 'not signed in' });
+  const smtpConfigured = Boolean(SMTP_USER && SMTP_APP_PASSWORD);
+  if (!smtpConfigured) return res.json({ smtpConfigured: false, verifyOk: false, error: 'not_configured' });
+  try {
+    await Promise.race([
+      getMailTransport().verify(),
+      new Promise((_, reject) => setTimeout(
+        () => reject(Object.assign(new Error('verify timed out'), { code: 'ETIMEDOUT' })), 12000)),
+    ]);
+    return res.json({ smtpConfigured: true, verifyOk: true, error: null });
+  } catch (e) {
+    const category = emailErrorCategory(e);
+    console.error('email diag failed:', category, '-', sanitizedMailError(e));
+    return res.json({ smtpConfigured: true, verifyOk: false, error: category });
+  }
 }));
 
 app.get('/api/auth/me', ah(async (req, res) => {

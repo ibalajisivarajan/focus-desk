@@ -31,7 +31,7 @@
 
   /* Header / dashboard */
   header.dash{
-    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+    display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;
     margin-bottom:26px;
   }
   .title{display:flex;align-items:center;gap:14px}
@@ -231,8 +231,6 @@
   .google-btn svg{flex:none}
 
   /* Header user chip */
-  .userbox{display:flex;align-items:center;gap:10px}
-  .username{font-size:13px;color:var(--muted);font-weight:600}
   .btn.small{padding:8px 14px;font-size:13px}
 
   /* Header weather (compact line under the date) */
@@ -255,7 +253,6 @@
   .unit-toggle{font-size:12px;color:var(--muted);text-decoration:underline;padding:6px 4px;white-space:nowrap;align-self:center}
 
   /* Header menu (⋯) */
-  .userbox{position:relative}
   .menu-wrap{position:relative}
   .menu-btn{
     width:38px;height:38px;border-radius:12px;border:1px solid var(--line);
@@ -274,6 +271,11 @@
     font-size:14px;font-weight:600;color:var(--ink);
   }
   .menu button:hover{background:var(--accent-soft)}
+  .menu-label{
+    padding:10px 12px 8px;font-size:13px;font-weight:600;color:var(--muted);
+    border-bottom:1px solid var(--line);margin-bottom:4px;cursor:default;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;
+  }
 
 </style>
 
@@ -369,14 +371,12 @@
       <div class="stat"><b id="statHabits">0</b><span>habits checked</span></div>
       <div class="stat"><b id="statFocus">0</b><span>min focused</span></div>
     </div>
-    <div class="userbox" id="userbox">
-      <span class="username" id="userName"></span>
-      <div class="menu-wrap">
-        <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-haspopup="menu" aria-expanded="false">⋯</button>
-        <div class="menu" id="menu" role="menu" hidden>
-          <button id="profileBtn" role="menuitem">Profile</button>
-          <button id="signOut" role="menuitem">Sign out</button>
-        </div>
+    <div class="menu-wrap" id="menuWrap">
+      <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-haspopup="menu" aria-expanded="false">⋯</button>
+      <div class="menu" id="menu" role="menu" hidden>
+        <div class="menu-label" id="menuHi">Hi</div>
+        <button id="profileBtn" role="menuitem">Profile</button>
+        <button id="signOut" role="menuitem">Sign out</button>
       </div>
     </div>
   </header>
@@ -590,9 +590,7 @@
   setInterval(trySync, 20000);
 
   /* ---------- dashboard header ---------- */
-  var hour = new Date().getHours();
-  var greeting = hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  document.getElementById("dateLine").textContent = greeting + " · " + new Date().toLocaleDateString(undefined,
+  document.getElementById("dateLine").textContent = new Date().toLocaleDateString(undefined,
     { weekday:"long", month:"long", day:"numeric" });
 
   function updateStats(){
@@ -923,7 +921,8 @@
   function hideAuth(){ authOverlay.hidden = true; }
   function setUser(u){
     currentUser = u;
-    document.getElementById("userName").textContent = (u && u.name) ? "Hi, " + u.name : "";
+    var menuHi = document.getElementById("menuHi");
+    if (menuHi) menuHi.textContent = (u && u.name) ? "Hi, " + u.name : "Hi";
   }
   function hideAuthError(){ document.getElementById("authError").hidden = true; }
   function showAuthError(msg){
@@ -1168,8 +1167,8 @@
   });
   document.addEventListener("click", function(e){
     if(!menuEl.hidden){
-      var ub = document.getElementById("userbox");
-      if(ub && !ub.contains(e.target)) setMenu(false);
+      var mw = document.getElementById("menuWrap");
+      if(mw && !mw.contains(e.target)) setMenu(false);
     }
   });
   document.addEventListener("keydown", function(e){
