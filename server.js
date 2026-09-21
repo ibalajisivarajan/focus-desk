@@ -4,10 +4,16 @@
 //   - Turso cloud database (set TURSO_URL + TURSO_TOKEN) — free tier, no
 //     credit card, data persists independently of the web host.
 // Same SQL either way: Turso speaks the SQLite dialect.
+//
+// Auth: username + password (scrypt-hashed), session cookie. Every /api/*
+// route except /api/auth/* requires a session, and all data is scoped to
+// the signed-in user. The first account created adopts any pre-auth data.
 
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import crypto from 'node:crypto';
+import { promisify } from 'node:util';
 import { createClient } from '@libsql/client';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -21,6 +27,9 @@ const TURSO_URL = process.env.TURSO_URL || '';
 const TURSO_TOKEN = process.env.TURSO_TOKEN || '';
 
 const useRemote = TURSO_URL.startsWith('libsql://') || TURSO_URL.startsWith('https://');
+
+const SESSION_COOKIE = 'fd_session';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /* ---------------- database ---------------- */
 let client;
@@ -68,10 +77,43 @@ async function initDb() {
       day TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      pass_salt TEXT NOT NULL,
+      pass_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_notes (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL DEFAULT '',
+      updated_at INTEGER NOT NULL
+    )`,
     'CREATE INDEX IF NOT EXISTS idx_todos_done ON todos(done, done_at)',
     'CREATE INDEX IF NOT EXISTS idx_marks_day ON habit_marks(day)',
     'CREATE INDEX IF NOT EXISTS idx_focus_day ON focus_sessions(day)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)',
   ].map((sql) => ({ sql, args: [] })));
+
+  // Per-user scoping for the pre-auth tables (idempotent — safe to re-run).
+  for (const t of ['todos', 'habits', 'focus_sessions']) {
+    try {
+      await client.execute({ sql: `ALTER TABLE ${t} ADD COLUMN user_id TEXT`, args: [] });
+    } catch (e) {
+      if (!/duplicate column/i.test(String(e && e.message))) throw e;
+    }
+  }
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_todos_user ON todos(user_id)');
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_habits_user ON habits(user_id)');
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_focus_user ON focus_sessions(user_id)');
+
   await client.execute({ sql: 'INSERT OR IGNORE INTO notes (id, text, updated_at) VALUES (1, ?, ?)', args: ['', Date.now()] });
 }
 
@@ -106,16 +148,102 @@ function bodyOf(req) { return req.body && typeof req.body === 'object' ? req.bod
 // Express 4 doesn't catch async handler rejections — wrap them.
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-async function getStats(day) {
-  const tasksDone = (await get('SELECT COUNT(*) AS c FROM todos WHERE done = 1 AND done_at = ?', day)).c;
-  const habitsChecked = (await get('SELECT COUNT(DISTINCT habit_id) AS c FROM habit_marks WHERE day = ?', day)).c;
-  const habitsTotal = (await get('SELECT COUNT(*) AS c FROM habits')).c;
-  const f = await get('SELECT COALESCE(SUM(minutes),0) AS minutes, COUNT(*) AS sessions FROM focus_sessions WHERE day = ?', day);
+/* ---------------- auth ---------------- */
+const scryptAsync = promisify(crypto.scrypt);
+
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const dk = await scryptAsync(password, salt, 64);
+  return { salt, hash: dk.toString('hex') };
+}
+async function verifyPassword(password, salt, hash) {
+  try {
+    const dk = await scryptAsync(password, salt, 64);
+    return crypto.timingSafeEqual(dk, Buffer.from(String(hash), 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+function parseCookies(req) {
+  const out = {};
+  const header = req.headers.cookie;
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    try {
+      out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
+function isSecureReq(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  if (proto === 'https') return true;
+  if (proto === 'http') return false;
+  const host = String(req.headers.host || '');
+  return !(host.startsWith('localhost') || host.startsWith('127.0.0.1'));
+}
+
+async function createSession(req, res, userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  await run('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)',
+    token, userId, now, now + SESSION_TTL_MS);
+  // Opportunistic cleanup of expired sessions; never blocks login.
+  run('DELETE FROM sessions WHERE expires_at < ?', now).catch(() => {});
+  const secure = isSecureReq(req) ? '; Secure' : '';
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+async function sessionUser(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const s = await get('SELECT user_id, expires_at FROM sessions WHERE token = ?', token);
+  if (!s) return null;
+  if (Number(s.expires_at) < Date.now()) {
+    await run('DELETE FROM sessions WHERE token = ?', token);
+    return null;
+  }
+  return get('SELECT id, name FROM users WHERE id = ?', s.user_id);
+}
+
+async function authRequired(req, res, next) {
+  const user = await sessionUser(req);
+  if (!user) return res.status(401).json({ error: 'not signed in' });
+  req.user = user;
+  next();
+}
+
+function validName(v) {
+  return typeof v === 'string' && v.trim().length >= 1 && v.trim().length <= 40;
+}
+function validPassword(v) {
+  return typeof v === 'string' && v.length >= 8 && v.length <= 128;
+}
+
+/* ---------------- per-user queries ---------------- */
+async function getStats(userId, day) {
+  const tasksDone = (await get('SELECT COUNT(*) AS c FROM todos WHERE user_id = ? AND done = 1 AND done_at = ?', userId, day)).c;
+  const habitsChecked = (await get(
+    `SELECT COUNT(DISTINCT m.habit_id) AS c FROM habit_marks m
+     JOIN habits h ON h.id = m.habit_id WHERE h.user_id = ? AND m.day = ?`, userId, day)).c;
+  const habitsTotal = (await get('SELECT COUNT(*) AS c FROM habits WHERE user_id = ?', userId)).c;
+  const f = await get('SELECT COALESCE(SUM(minutes),0) AS minutes, COUNT(*) AS sessions FROM focus_sessions WHERE user_id = ? AND day = ?', userId, day);
   return { tasksDone, habitsChecked, habitsTotal, focusMinutes: f.minutes, focusSessions: f.sessions };
 }
 
-async function streakOf(habitId) {
-  const has = async (day) => (await get('SELECT 1 AS one FROM habit_marks WHERE habit_id = ? AND day = ?', habitId, day)) !== undefined;
+async function streakOf(userId, habitId) {
+  const has = async (day) => (await get(
+    `SELECT 1 AS one FROM habit_marks m JOIN habits h ON h.id = m.habit_id
+     WHERE h.user_id = ? AND m.habit_id = ? AND m.day = ?`, userId, habitId, day)) !== undefined;
   let streak = 0;
   const d = new Date();
   if (!(await has(todayStr(d)))) d.setDate(d.getDate() - 1);
@@ -123,25 +251,28 @@ async function streakOf(habitId) {
   return streak;
 }
 
-async function todoRow(id) {
-  return get('SELECT id, text, done, done_at AS doneAt FROM todos WHERE id = ?', id);
+async function todoRow(userId, id) {
+  return get('SELECT id, text, done, done_at AS doneAt FROM todos WHERE user_id = ? AND id = ?', userId, id);
 }
 
-async function habitRow(id) {
-  const h = await get('SELECT id, name FROM habits WHERE id = ?', id);
+async function habitRow(userId, id) {
+  const h = await get('SELECT id, name FROM habits WHERE user_id = ? AND id = ?', userId, id);
   if (!h) return null;
   const marks = {};
   for (const m of await all("SELECT day FROM habit_marks WHERE habit_id = ? AND day >= date('now','-13 days')", id)) {
     marks[m.day] = 1;
   }
-  return { id: h.id, name: h.name, marks, streak: await streakOf(id) };
+  return { id: h.id, name: h.name, marks, streak: await streakOf(userId, id) };
 }
 
 /* ---------------- app ---------------- */
 const app = express();
 
+// Behind Render (or any proxy) so rate limiting sees the real client IP.
+app.set('trust proxy', 1);
+
 // Security headers. CSP allows the app's own inline <style>/<script>
-// (single-file frontend), nothing else.
+// (single-file frontend) plus the keyless Open-Meteo weather APIs.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -149,7 +280,7 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", "https://api.open-meteo.com", "https://geocoding-api.open-meteo.com"],
       objectSrc: ["'none'"],
     },
   },
@@ -167,37 +298,105 @@ app.use('/api/', rateLimit({
   message: { error: 'too many requests, slow down' },
 }));
 
+// Stricter limit for auth endpoints (brute-force protection).
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'too many sign-in attempts, try again later' },
+});
+
 app.get('/healthz', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+/* ---- auth (public) ---- */
+app.post('/api/auth/signup', authLimiter, ah(async (req, res) => {
+  const b = bodyOf(req);
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!validName(name)) return res.status(400).json({ error: 'name must be 1-40 characters' });
+  if (!validPassword(b.password)) return res.status(400).json({ error: 'password must be 8-128 characters' });
+  if (await get('SELECT id FROM users WHERE lower(name) = lower(?)', name)) {
+    return res.status(409).json({ error: 'that name is taken' });
+  }
+  const { salt, hash } = await hashPassword(b.password);
+  const id = uid();
+  const now = Date.now();
+  await run('INSERT INTO users (id, name, pass_salt, pass_hash, created_at) VALUES (?,?,?,?,?)',
+    id, name, salt, hash, now);
+  // The very first account adopts any data created before auth existed.
+  if (Number((await get('SELECT COUNT(*) AS c FROM users')).c) === 1) {
+    for (const t of ['todos', 'habits', 'focus_sessions']) {
+      await run(`UPDATE ${t} SET user_id = ? WHERE user_id IS NULL`, id);
+    }
+    const old = await get('SELECT text, updated_at FROM notes WHERE id = 1');
+    if (old && old.text) {
+      await run('INSERT OR IGNORE INTO user_notes (user_id, text, updated_at) VALUES (?,?,?)',
+        id, old.text, old.updated_at);
+    }
+  }
+  await createSession(req, res, id);
+  res.status(201).json({ ok: true, user: { id, name } });
+}));
+
+app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
+  const b = bodyOf(req);
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  const u = name ? await get('SELECT id, name, pass_salt, pass_hash FROM users WHERE lower(name) = lower(?)', name) : null;
+  if (!u || !(await verifyPassword(b.password || '', u.pass_salt, u.pass_hash))) {
+    return res.status(401).json({ error: 'invalid name or password' });
+  }
+  await createSession(req, res, u.id);
+  res.json({ ok: true, user: { id: u.id, name: u.name } });
+}));
+
+app.post('/api/auth/logout', ah(async (req, res) => {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (token) await run('DELETE FROM sessions WHERE token = ?', token);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+}));
+
+app.get('/api/auth/me', ah(async (req, res) => {
+  const user = await sessionUser(req);
+  if (!user) return res.status(401).json({ error: 'not signed in' });
+  res.json({ user });
+}));
+
+// Everything below requires a signed-in user.
+app.use('/api/', ah(authRequired));
 
 /* ---- combined state (what the frontend boots from) ---- */
 app.get('/api/state', ah(async (req, res) => {
+  const u = req.user.id;
   const day = todayStr();
-  const todos = await all('SELECT id, text, done, done_at AS doneAt FROM todos ORDER BY position DESC, created_at DESC');
-  const habitIds = await all('SELECT id FROM habits ORDER BY created_at ASC, rowid ASC');
+  const todos = await all('SELECT id, text, done, done_at AS doneAt FROM todos WHERE user_id = ? ORDER BY position DESC, created_at DESC', u);
+  const habitIds = await all('SELECT id FROM habits WHERE user_id = ? ORDER BY created_at ASC, rowid ASC', u);
   const habits = [];
-  for (const h of habitIds) habits.push(await habitRow(h.id));
-  const notes = await get('SELECT text FROM notes WHERE id = 1');
-  res.json({ todos, habits, notes: notes ? notes.text : '', stats: await getStats(day) });
+  for (const h of habitIds) habits.push(await habitRow(u, h.id));
+  const notes = await get('SELECT text FROM user_notes WHERE user_id = ?', u);
+  res.json({ todos, habits, notes: notes ? notes.text : '', stats: await getStats(u, day), user: req.user });
 }));
 
 /* ---- todos ---- */
 app.post('/api/todos', ah(async (req, res) => {
+  const u = req.user.id;
   const b = bodyOf(req);
   const text = typeof b.text === 'string' ? b.text.trim() : '';
   if (!text || text.length > 200) return res.status(400).json({ error: 'text must be 1-200 characters' });
   let id = b.id;
   if (id !== undefined && !validId(id)) return res.status(400).json({ error: 'invalid id' });
   if (!id) id = uid();
-  const m = (await get('SELECT COALESCE(MAX(position),0) AS m FROM todos')).m || 0;
-  await run('INSERT INTO todos (id, text, done, done_at, position, created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING',
-    id, text, 0, null, m + 1, Date.now());
-  res.status(201).json(await todoRow(id));
+  const m = (await get('SELECT COALESCE(MAX(position),0) AS m FROM todos WHERE user_id = ?', u)).m || 0;
+  await run('INSERT INTO todos (id, user_id, text, done, done_at, position, created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING',
+    id, u, text, 0, null, m + 1, Date.now());
+  res.status(201).json(await todoRow(u, id));
 }));
 
 app.patch('/api/todos/:id', ah(async (req, res) => {
+  const u = req.user.id;
   const { id } = req.params;
   if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
-  if (!(await get('SELECT id FROM todos WHERE id = ?', id))) return res.status(404).json({ error: 'not found' });
+  if (!(await get('SELECT id FROM todos WHERE user_id = ? AND id = ?', u, id))) return res.status(404).json({ error: 'not found' });
   const b = bodyOf(req);
   const sets = [], vals = [];
   if (typeof b.text === 'string') {
@@ -210,53 +409,57 @@ app.patch('/api/todos/:id', ah(async (req, res) => {
     vals.push(b.done ? 1 : 0, b.done ? todayStr() : null);
   }
   if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
-  await run(`UPDATE todos SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
-  res.json(await todoRow(id));
+  await run(`UPDATE todos SET ${sets.join(', ')} WHERE user_id = ? AND id = ?`, ...vals, u, id);
+  res.json(await todoRow(u, id));
 }));
 
 app.delete('/api/todos/:id', ah(async (req, res) => {
+  const u = req.user.id;
   const { id } = req.params;
   if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
-  const r = await run('DELETE FROM todos WHERE id = ?', id);
+  const r = await run('DELETE FROM todos WHERE user_id = ? AND id = ?', u, id);
   if (Number(r.rowsAffected) === 0) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
 }));
 
 /* ---- habits ---- */
 app.post('/api/habits', ah(async (req, res) => {
+  const u = req.user.id;
   const b = bodyOf(req);
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   if (!name || name.length > 80) return res.status(400).json({ error: 'name must be 1-80 characters' });
   let id = b.id;
   if (id !== undefined && !validId(id)) return res.status(400).json({ error: 'invalid id' });
   if (!id) id = uid();
-  await run('INSERT INTO habits (id, name, created_at) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING',
-    id, name, Date.now());
-  res.status(201).json(await habitRow(id));
+  await run('INSERT INTO habits (id, user_id, name, created_at) VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING',
+    id, u, name, Date.now());
+  res.status(201).json(await habitRow(u, id));
 }));
 
 app.delete('/api/habits/:id', ah(async (req, res) => {
+  const u = req.user.id;
   const { id } = req.params;
   if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
+  if (!(await get('SELECT id FROM habits WHERE user_id = ? AND id = ?', u, id))) {
+    return res.status(404).json({ error: 'not found' });
+  }
   const tx = await client.transaction('write');
-  let changes = 0;
   try {
     await tx.execute({ sql: 'DELETE FROM habit_marks WHERE habit_id = ?', args: [id] });
-    const r = await tx.execute({ sql: 'DELETE FROM habits WHERE id = ?', args: [id] });
-    changes = Number(r.rowsAffected);
+    await tx.execute({ sql: 'DELETE FROM habits WHERE user_id = ? AND id = ?', args: [u, id] });
     await tx.commit();
   } catch (e) {
     await tx.rollback();
     throw e;
   }
-  if (changes === 0) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true });
 }));
 
 app.post('/api/habits/:id/checkin', ah(async (req, res) => {
+  const u = req.user.id;
   const { id } = req.params;
   if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
-  if (!(await get('SELECT id FROM habits WHERE id = ?', id))) return res.status(404).json({ error: 'not found' });
+  if (!(await get('SELECT id FROM habits WHERE user_id = ? AND id = ?', u, id))) return res.status(404).json({ error: 'not found' });
   const b = bodyOf(req);
   let day = b.day;
   if (day === undefined || day === null) day = todayStr();
@@ -270,44 +473,48 @@ app.post('/api/habits/:id/checkin', ah(async (req, res) => {
     await run('INSERT INTO habit_marks (habit_id, day) VALUES (?,?)', id, day);
     done = true;
   }
-  res.json({ ok: true, id, day, done, streak: await streakOf(id), stats: await getStats(todayStr()) });
+  res.json({ ok: true, id, day, done, streak: await streakOf(u, id), stats: await getStats(u, todayStr()) });
 }));
 
 /* ---- notes ---- */
 app.get('/api/notes', ah(async (req, res) => {
-  const n = await get('SELECT text, updated_at AS updatedAt FROM notes WHERE id = 1');
+  const u = req.user.id;
+  const n = await get('SELECT text, updated_at AS updatedAt FROM user_notes WHERE user_id = ?', u);
   res.json({ text: n ? n.text : '', updatedAt: n ? n.updatedAt : null });
 }));
 
 app.put('/api/notes', ah(async (req, res) => {
+  const u = req.user.id;
   const b = bodyOf(req);
   const text = typeof b.text === 'string' ? b.text : null;
   if (text === null || text.length > 200000) return res.status(400).json({ error: 'text must be a string up to 200000 characters' });
   const now = Date.now();
-  await run(`INSERT INTO notes (id, text, updated_at) VALUES (1, ?, ?)
-              ON CONFLICT(id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at`,
-    text, now);
+  await run(`INSERT INTO user_notes (user_id, text, updated_at) VALUES (?, ?, ?)
+              ON CONFLICT(user_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at`,
+    u, text, now);
   res.json({ ok: true, updatedAt: now });
 }));
 
 /* ---- focus sessions ---- */
 app.post('/api/focus/sessions', ah(async (req, res) => {
+  const u = req.user.id;
   const b = bodyOf(req);
   if (!MODES.has(b.mode)) return res.status(400).json({ error: 'mode must be focus, short, or long' });
   if (!Number.isInteger(b.minutes) || b.minutes < 0 || b.minutes > 480) {
     return res.status(400).json({ error: 'minutes must be an integer 0-480' });
   }
   const day = todayStr();
-  const r = await run('INSERT INTO focus_sessions (mode, minutes, day, created_at) VALUES (?,?,?,?)',
-    b.mode, b.minutes, day, Date.now());
-  res.status(201).json({ ok: true, id: Number(r.lastInsertRowid), stats: await getStats(day) });
+  const r = await run('INSERT INTO focus_sessions (user_id, mode, minutes, day, created_at) VALUES (?,?,?,?,?)',
+    u, b.mode, b.minutes, day, Date.now());
+  res.status(201).json({ ok: true, id: Number(r.lastInsertRowid), stats: await getStats(u, day) });
 }));
 
 app.get('/api/focus/stats', ah(async (req, res) => {
+  const u = req.user.id;
   let day = req.query.day;
   if (day === undefined) day = todayStr();
   if (!validDay(day)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
-  res.json({ day, ...(await getStats(day)) });
+  res.json({ day, ...(await getStats(u, day)) });
 }));
 
 /* ---- frontend + errors ---- */

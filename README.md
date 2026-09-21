@@ -1,9 +1,15 @@
 # Focus Desk — Hosted Edition
 
 A self-hostable version of the **Focus Desk** productivity app (to-dos, habit streaks,
-pomodoro timer, quick notes, daily stats header). Same warm-paper UI as the single-file
+pomodoro timer, quick notes, daily stats header, weather card). Same warm-paper UI as the single-file
 version, but all data lives in a **SQLite database on the server**, so it follows you
 across devices.
+
+- **Auth:** username + password (scrypt-hashed), 30-day session cookie. Every
+  account sees only its own data; the first account created adopts any data
+  from before auth existed.
+- **Weather:** current conditions + today's high/low via Open-Meteo (free, no
+  API key). Location from GPS or city search, °C/°F toggle.
 
 - **Backend:** Node.js + Express, libSQL (`@libsql/client`) — a local SQLite file by
   default, or a free Turso cloud database when `TURSO_URL`/`TURSO_TOKEN` are set.

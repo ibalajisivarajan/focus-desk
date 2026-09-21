@@ -144,10 +144,74 @@
   .save-state.saved{color:var(--green)}
 
   footer{margin-top:32px;text-align:center;color:var(--muted);font-size:12px}
+
+  /* Auth overlay */
+  .auth-overlay{
+    position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;
+    background:color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  }
+  .auth-overlay[hidden]{display:none}
+  .auth-card{
+    background:var(--card);border:1px solid var(--line);border-radius:20px;
+    box-shadow:var(--shadow);padding:32px 28px;width:100%;max-width:380px;
+    display:flex;flex-direction:column;gap:12px;
+  }
+  .auth-card h1{
+    font-family:Georgia,"Times New Roman",serif;font-style:italic;font-weight:600;
+    font-size:30px;letter-spacing:-.01em;text-align:center;
+  }
+  .auth-card h1 .dot{color:var(--accent);font-style:normal}
+  .auth-sub{text-align:center;color:var(--muted);font-size:14px;margin-top:-8px}
+  .auth-tabs{display:flex;background:var(--bg);border-radius:10px;padding:4px;margin:4px 0}
+  .auth-tab{flex:1;padding:8px;border-radius:8px;font-weight:600;font-size:14px;color:var(--muted)}
+  .auth-tab.active{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+  .auth-card input[type=text],.auth-card input[type=password]{
+    font:inherit;color:var(--ink);background:var(--bg);
+    border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;
+  }
+  .auth-error{
+    background:var(--accent-soft);color:var(--red);font-size:13px;font-weight:600;
+    border-radius:10px;padding:10px 12px;
+  }
+  .auth-error[hidden]{display:none}
+  .auth-hint{text-align:center;color:var(--muted);font-size:12px}
+
+  /* Header user chip */
+  .userbox{display:flex;align-items:center;gap:10px}
+  .username{font-size:13px;color:var(--muted);font-weight:600}
+  .btn.small{padding:7px 12px;font-size:13px}
+
+  /* Weather */
+  .weather-now{display:flex;align-items:center;gap:14px}
+  .weather-temp{font-size:40px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .weather-meta{min-width:0}
+  .weather-cond{font-weight:600}
+  .weather-hilo{font-size:13px;color:var(--muted)}
+  .weather-loc{font-size:12px;color:var(--muted);margin-top:2px}
+  .weather-emoji{font-size:38px}
+  .unit-toggle{font-size:12px;color:var(--muted);text-decoration:underline;padding:2px 4px}
 </style>
 </head>
 <body>
 <div class="offline-banner" id="offlineBanner" hidden><span></span></div>
+
+<div class="auth-overlay" id="authOverlay" hidden>
+  <div class="auth-card">
+    <h1>Focus Desk<span class="dot">.</span></h1>
+    <p class="auth-sub" id="authSub">Sign in to your desk</p>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabSignin">Sign in</button>
+      <button class="auth-tab" id="tabSignup">Create account</button>
+    </div>
+    <input type="text" id="authName" placeholder="Username" maxlength="40" autocomplete="username">
+    <input type="password" id="authPass" placeholder="Password (8+ characters)" autocomplete="current-password">
+    <div class="auth-error" id="authError" hidden></div>
+    <button class="btn" id="authGo">Sign in</button>
+    <p class="auth-hint">Your data is private to your account.</p>
+  </div>
+</div>
+
 <div class="wrap">
 
   <header class="dash">
@@ -159,6 +223,10 @@
       <div class="stat"><b id="statTasks">0</b><span>tasks done</span></div>
       <div class="stat"><b id="statHabits">0</b><span>habits checked</span></div>
       <div class="stat"><b id="statFocus">0</b><span>min focused</span></div>
+    </div>
+    <div class="userbox">
+      <span class="username" id="userName"></span>
+      <button class="btn ghost small" id="signOut">Sign out</button>
     </div>
   </header>
 
@@ -211,6 +279,27 @@
       <h2 id="h-notes"><span class="emoji">✎</span>Quick notes</h2>
       <textarea id="notes" placeholder="Jot anything down — it saves automatically." aria-label="Quick notes"></textarea>
       <div class="save-state" id="saveState"></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-weather">
+      <h2 id="h-weather"><span class="emoji">☀️</span>Weather</h2>
+      <div class="weather-now" id="weatherNow">
+        <span class="weather-emoji" id="weatherEmoji">🌤️</span>
+        <div class="weather-meta">
+          <div>
+            <span class="weather-temp" id="weatherTemp">--</span>
+            <button class="unit-toggle" id="unitToggle" aria-label="Toggle temperature unit">°C</button>
+          </div>
+          <div class="weather-cond" id="weatherCond">Locating…</div>
+          <div class="weather-hilo" id="weatherHilo"></div>
+          <div class="weather-loc" id="weatherLoc"></div>
+        </div>
+      </div>
+      <div class="row">
+        <input type="text" id="weatherCity" placeholder="City, e.g. Langley" maxlength="80" aria-label="City for weather">
+        <button class="btn ghost" id="weatherSet">Set</button>
+        <button class="btn ghost" id="weatherLocate" aria-label="Use my location" title="Use my location">📍</button>
+      </div>
     </section>
 
   </main>
@@ -270,19 +359,26 @@
   }
 
   // Optimistic API wrapper: on network failure, mark offline and queue the write.
+  // On 401 (signed out / session expired), show the sign-in screen instead.
   function api(method, path, data){
     return fetch(path, {
       method: method,
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: data === undefined ? undefined : JSON.stringify(data)
     }).then(function(res){
       if(!res.ok){
         var err = new Error("HTTP " + res.status);
         err.http = true;
+        err.status = res.status;
         throw err;
       }
       return res.json();
     }).catch(function(err){
+      if(err && err.status === 401){
+        showAuth();
+        throw err;
+      }
       if(!err.http){
         setOnline(false);
         var q = getQueue();
@@ -295,16 +391,25 @@
   }
 
   function loadState(){
-    return fetch("/api/state", { cache: "no-store" }).then(function(res){
+    return fetch("/api/state", { cache: "no-store", credentials: "same-origin" }).then(function(res){
+      if(res.status === 401){
+        var authErr = new Error("HTTP 401");
+        authErr.http = true;
+        authErr.status = 401;
+        throw authErr;
+      }
       if(!res.ok) throw new Error("bad status " + res.status);
       return res.json();
     }).then(function(s){
       state = s;
       if(!state.stats) state.stats = { tasksDone:0, habitsChecked:0, habitsTotal:0, focusMinutes:0, focusSessions:0 };
+      if(s.user) setUser(s.user);
       try{ localStorage.setItem(CACHE_KEY, JSON.stringify(state)); }catch(e){}
       setOnline(true);
+      hideAuth();
       renderAll();
-    }).catch(function(){
+    }).catch(function(err){
+      if(err && err.status === 401){ showAuth(); return; }
       setOnline(false);
       try{
         var c = localStorage.getItem(CACHE_KEY);
@@ -319,14 +424,24 @@
     var q = getQueue();
     var chain = Promise.resolve();
     var i = 0;
+    var stopped = false;
     function step(){
-      if(i >= q.length) return Promise.resolve();
+      if(stopped || i >= q.length) return Promise.resolve();
       var item = q[i++];
       return fetch(item.path, {
         method: item.method,
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: item.data === null ? undefined : JSON.stringify(item.data)
-      }).then(function(){ return step(); }, function(){
+      }).then(function(res){
+        if(res && res.status === 401){
+          stopped = true;
+          i--; // keep this item and everything after it queued
+          showAuth();
+          return Promise.resolve();
+        }
+        return step();
+      }, function(){
         i--; // network failed again; keep this item and everything after it
         return Promise.resolve();
       });
@@ -669,7 +784,230 @@
     if(document.activeElement !== notesEl) notesEl.value = state.notes || "";
     updateStats();
   }
-  loadState();
+  /* ---------- auth ---------- */
+  var authOverlay = document.getElementById("authOverlay");
+  var authMode = "signin"; // or "signup"
+  var currentUser = null;
+
+  function showAuth(){ authOverlay.hidden = false; }
+  function hideAuth(){ authOverlay.hidden = true; }
+  function setUser(u){
+    currentUser = u;
+    document.getElementById("userName").textContent = (u && u.name) ? "Hi, " + u.name : "";
+  }
+  function hideAuthError(){ document.getElementById("authError").hidden = true; }
+  function showAuthError(msg){
+    var el = document.getElementById("authError");
+    el.textContent = msg;
+    el.hidden = false;
+  }
+  function setAuthMode(mode){
+    authMode = mode;
+    document.getElementById("tabSignin").classList.toggle("active", mode === "signin");
+    document.getElementById("tabSignup").classList.toggle("active", mode === "signup");
+    document.getElementById("authGo").textContent = mode === "signin" ? "Sign in" : "Create account";
+    document.getElementById("authSub").textContent = mode === "signin"
+      ? "Sign in to your desk"
+      : "Create your account — the first one claims this desk's data";
+    hideAuthError();
+  }
+
+  function submitAuth(){
+    hideAuthError();
+    var name = document.getElementById("authName").value.trim();
+    var pass = document.getElementById("authPass").value;
+    if(!name){ showAuthError("Enter a username."); return; }
+    if(pass.length < 8){ showAuthError("Password needs at least 8 characters."); return; }
+    var go = document.getElementById("authGo");
+    go.disabled = true;
+    go.textContent = "One moment…";
+    fetch("/api/auth/" + authMode, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, password: pass })
+    }).then(function(res){
+      return res.json().then(function(body){ return { status: res.status, body: body }; });
+    }).then(function(r){
+      go.disabled = false;
+      setAuthMode(authMode); // restores the button label
+      if(r.status === 200 || r.status === 201){
+        document.getElementById("authPass").value = "";
+        setUser(r.body.user);
+        hideAuth();
+        loadState();
+      } else {
+        showAuthError((r.body && r.body.error) || "Something went wrong — try again.");
+      }
+    }).catch(function(){
+      go.disabled = false;
+      setAuthMode(authMode);
+      showAuthError("Can't reach the server — check your connection.");
+    });
+  }
+
+  document.getElementById("tabSignin").addEventListener("click", function(){ setAuthMode("signin"); });
+  document.getElementById("tabSignup").addEventListener("click", function(){ setAuthMode("signup"); });
+  document.getElementById("authGo").addEventListener("click", submitAuth);
+  document.getElementById("authPass").addEventListener("keydown", function(e){ if(e.key === "Enter") submitAuth(); });
+  document.getElementById("authName").addEventListener("keydown", function(e){ if(e.key === "Enter") submitAuth(); });
+  document.getElementById("signOut").addEventListener("click", function(){
+    fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).then(function(){
+      setUser(null);
+      try{ localStorage.removeItem(CACHE_KEY); }catch(e){}
+      setQueue([]);
+      showAuth();
+    }, function(){});
+  });
+
+  /* ---------- weather (Open-Meteo: free, no API key) ---------- */
+  var WCFG_KEY = "focusdesk:weather";
+  var WDATA_KEY = "focusdesk:weather:data";
+  var WMO = {
+    0: ["☀️", "Clear sky"], 1: ["🌤️", "Mainly clear"], 2: ["⛅", "Partly cloudy"],
+    3: ["☁️", "Overcast"], 45: ["🌫️", "Fog"], 48: ["🌫️", "Icy fog"],
+    51: ["🌦️", "Light drizzle"], 53: ["🌦️", "Drizzle"], 55: ["🌧️", "Drizzle"],
+    56: ["🌧️", "Freezing drizzle"], 57: ["🌧️", "Freezing drizzle"],
+    61: ["🌧️", "Light rain"], 63: ["🌧️", "Rain"], 65: ["🌧️", "Heavy rain"],
+    66: ["🌧️", "Freezing rain"], 67: ["🌧️", "Freezing rain"],
+    71: ["🌨️", "Light snow"], 73: ["🌨️", "Snow"], 75: ["❄️", "Heavy snow"],
+    77: ["🌨️", "Snow grains"], 80: ["🌦️", "Light showers"], 81: ["🌧️", "Showers"],
+    82: ["⛈️", "Violent showers"], 85: ["🌨️", "Snow showers"], 86: ["🌨️", "Snow showers"],
+    95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Storm with hail"], 99: ["⛈️", "Storm with hail"]
+  };
+
+  function defaultUnit(){
+    return (navigator.language || "en").toLowerCase() === "en-us" ? "fahrenheit" : "celsius";
+  }
+  function getWcfg(){
+    try{
+      var c = JSON.parse(localStorage.getItem(WCFG_KEY));
+      if(c && typeof c.lat === "number" && typeof c.lon === "number") return c;
+    }catch(e){}
+    return { lat: null, lon: null, label: "", unit: defaultUnit() };
+  }
+  function setWcfg(c){ try{ localStorage.setItem(WCFG_KEY, JSON.stringify(c)); }catch(e){} }
+
+  function renderWeather(d, cfg){
+    var unitSym = cfg.unit === "fahrenheit" ? "°F" : "°C";
+    document.getElementById("unitToggle").textContent = unitSym;
+    if(!d){
+      document.getElementById("weatherTemp").textContent = "--";
+      document.getElementById("weatherCond").textContent =
+        cfg.lat === null ? "Tap 📍 or set a city below" : "Unavailable — check connection";
+      document.getElementById("weatherHilo").textContent = "";
+      document.getElementById("weatherLoc").textContent = cfg.label || "";
+      return;
+    }
+    var cur = d.current || {};
+    var daily = d.daily || {};
+    var w = WMO[cur.weather_code] || ["🌤️", ""];
+    document.getElementById("weatherEmoji").textContent = w[0];
+    document.getElementById("weatherTemp").textContent = Math.round(cur.temperature_2m) + "°";
+    document.getElementById("weatherCond").textContent = w[1];
+    var hi = daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[0]) : null;
+    var lo = daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[0]) : null;
+    document.getElementById("weatherHilo").textContent =
+      (hi !== null && lo !== null) ? "H " + hi + "°  ·  L " + lo + "°" : "";
+    document.getElementById("weatherLoc").textContent = cfg.label || "";
+  }
+
+  function fetchWeather(){
+    var cfg = getWcfg();
+    if(cfg.lat === null){ renderWeather(null, cfg); return; }
+    var url = "https://api.open-meteo.com/v1/forecast?latitude=" + cfg.lat +
+      "&longitude=" + cfg.lon +
+      "&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min" +
+      "&temperature_unit=" + cfg.unit + "&timezone=auto";
+    fetch(url).then(function(res){
+      if(!res.ok) throw new Error("bad weather status");
+      return res.json();
+    }).then(function(d){
+      try{ localStorage.setItem(WDATA_KEY, JSON.stringify({ at: Date.now(), data: d })); }catch(e){}
+      renderWeather(d, getWcfg());
+    }).catch(function(){
+      var cached = null;
+      try{ cached = JSON.parse(localStorage.getItem(WDATA_KEY)); }catch(e){}
+      renderWeather(cached && cached.data ? cached.data : null, getWcfg());
+    });
+  }
+
+  function locateWeather(){
+    document.getElementById("weatherCond").textContent = "Locating…";
+    if(!("geolocation" in navigator)){
+      document.getElementById("weatherCond").textContent = "Geolocation not available — enter a city.";
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(function(pos){
+      var cfg = getWcfg();
+      cfg.lat = pos.coords.latitude;
+      cfg.lon = pos.coords.longitude;
+      cfg.label = "Current location";
+      setWcfg(cfg);
+      fetchWeather();
+    }, function(){
+      document.getElementById("weatherCond").textContent = "Location blocked — enter a city below.";
+    }, { timeout: 10000 });
+  }
+
+  function setWeatherCity(){
+    var input = document.getElementById("weatherCity");
+    var q = input.value.trim();
+    if(!q) return;
+    document.getElementById("weatherCond").textContent = "Searching…";
+    fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(q) +
+      "&count=1&language=en&format=json").then(function(res){
+      if(!res.ok) throw new Error("bad geocode status");
+      return res.json();
+    }).then(function(d){
+      if(!d.results || !d.results.length) throw new Error("no results");
+      var r = d.results[0];
+      var cfg = getWcfg();
+      cfg.lat = r.latitude;
+      cfg.lon = r.longitude;
+      cfg.label = r.name + (r.country ? ", " + r.country : "");
+      setWcfg(cfg);
+      input.value = "";
+      fetchWeather();
+    }).catch(function(){
+      document.getElementById("weatherCond").textContent = "City not found — try another.";
+    });
+  }
+
+  document.getElementById("weatherSet").addEventListener("click", setWeatherCity);
+  document.getElementById("weatherCity").addEventListener("keydown", function(e){ if(e.key === "Enter") setWeatherCity(); });
+  document.getElementById("weatherLocate").addEventListener("click", locateWeather);
+  document.getElementById("unitToggle").addEventListener("click", function(){
+    var cfg = getWcfg();
+    cfg.unit = cfg.unit === "fahrenheit" ? "celsius" : "fahrenheit";
+    setWcfg(cfg);
+    fetchWeather();
+  });
+
+  /* ---------- boot ---------- */
+  function boot(){
+    fetch("/api/auth/me", { credentials: "same-origin" }).then(function(res){
+      if(res.ok){
+        return res.json().then(function(b){ setUser(b.user); hideAuth(); loadState(); });
+      }
+      if(res.status === 401){ showAuth(); return; }
+      loadState();
+    }).catch(function(){
+      loadState(); // offline: fall back to the cached state
+    });
+    // Weather is per-device and needs no sign-in — start it right away.
+    var cfg = getWcfg();
+    if(cfg.lat !== null){
+      fetchWeather();
+    } else {
+      var cached = null;
+      try{ cached = JSON.parse(localStorage.getItem(WDATA_KEY)); }catch(e){}
+      if(cached && cached.data) renderWeather(cached.data, cfg);
+      else locateWeather();
+    }
+    setInterval(fetchWeather, 30 * 60 * 1000);
+  }
+  boot();
 })();
 </script>
 </body>
