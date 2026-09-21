@@ -529,17 +529,19 @@ app.post('/api/auth/signup', authLimiter, ah(async (req, res) => {
   if (Number((await get('SELECT COUNT(*) AS c FROM users')).c) === 1) {
     await adoptLegacyData(id);
   }
-  // Verification email is best-effort: signup succeeds even if mail isn't
-  // configured or delivery fails.
+  // Verification email: await the send so signup can honestly report whether
+  // the email went out (previously fire-and-forget, so failures were silent).
+  // Signup still succeeds when mail isn't configured or delivery fails.
+  let emailSent = false;
   if (emailEnabled && emailThrottleOk('verify:' + email)) {
     const { token, tokenHash } = newEmailToken();
     await run('INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES (?,?,?)',
       tokenHash, id, now + 24 * 3600 * 1000);
     const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${token}`;
-    sendMail(email, 'Your Focus Desk account was created', verificationEmailBody(name, link));
+    emailSent = await sendMail(email, 'Your Focus Desk account was created', verificationEmailBody(name, link));
   }
   await createSession(req, res, id);
-  res.status(201).json({ ok: true, user: { id, name, email, email_verified: 0, must_change_password: 0 } });
+  res.status(201).json({ ok: true, emailSent, user: { id, name, email, email_verified: 0, must_change_password: 0 } });
 }));
 
 app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
@@ -580,7 +582,7 @@ app.post('/api/auth/forgot-password', authLimiter, ah(async (req, res) => {
       const { salt, hash } = await hashPassword(temp);
       await run('UPDATE users SET pass_salt = ?, pass_hash = ?, must_change_password = 1 WHERE id = ?',
         salt, hash, u.id);
-      sendMail(u.email, 'Your temporary Focus Desk password', tempPasswordEmailBody(u.name, temp));
+      await sendMail(u.email, 'Your temporary Focus Desk password', tempPasswordEmailBody(u.name, temp));
     }
   }
   res.json({ ok: true, message: 'If an account exists for that email, a temporary password is on its way.' });
@@ -648,7 +650,7 @@ app.post('/api/auth/resend-verification', authLimiter, ah(async (req, res) => {
     await run('INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES (?,?,?)',
       tokenHash, full.id, Date.now() + 24 * 3600 * 1000);
     const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${token}`;
-    sendMail(full.email, 'Verify your Focus Desk email', verificationEmailBody(full.name, link));
+    await sendMail(full.email, 'Verify your Focus Desk email', verificationEmailBody(full.name, link));
   }
   res.json({ ok: true });
 }));

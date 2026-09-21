@@ -333,6 +333,11 @@
     <input type="text" id="profileName" maxlength="40" autocomplete="nickname">
     <label class="field-label">Email</label>
     <input type="email" id="profileEmail" readonly tabindex="-1">
+    <div id="verifyRow" hidden style="margin:2px 0 10px;font-size:13px">
+      <span id="verifyNote" style="color:var(--warn,#b45309)">Email not verified.</span>
+      <button class="linklike" id="resendVerify" type="button" style="margin-left:6px">Resend verification email</button>
+      <div class="auth-ok" id="resendMsg" hidden style="margin-top:4px"></div>
+    </div>
     <label class="field-label">Current password</label>
     <input type="password" id="profileCurrent" placeholder="Current password" autocomplete="current-password">
     <label class="field-label">New password</label>
@@ -1020,9 +1025,9 @@
         hideAuth();
         loadState();
         if(authMode === "signup"){
-          flash(emailSendingOn && signedUpEmail
+          flash(r.body.emailSent && signedUpEmail
             ? "Account created! A confirmation email is on its way to " + signedUpEmail
-            : "Account created — welcome!");
+            : "Account created — welcome! (The confirmation email couldn't be sent; you can resend it from your Profile.)");
         } else if(r.body.user && r.body.user.must_change_password){
           openProfile("You signed in with a temporary password — please set a new one below.");
         }
@@ -1139,6 +1144,11 @@
     var banner = document.getElementById("profileBanner");
     if(bannerMsg){ banner.textContent = bannerMsg; banner.hidden = false; }
     else banner.hidden = true;
+    // Verification resend: show only for email accounts that aren't verified.
+    var vr = document.getElementById("verifyRow");
+    var needsVerify = !!(currentUser.email && !currentUser.email_verified);
+    vr.hidden = !needsVerify;
+    document.getElementById("resendMsg").hidden = true;
     document.getElementById("profileOverlay").hidden = false;
   }
   function closeProfile(){ document.getElementById("profileOverlay").hidden = true; }
@@ -1156,6 +1166,23 @@
   document.getElementById("profileBtn").addEventListener("click", function(){ openProfile(); });
   document.getElementById("profileClose").addEventListener("click", closeProfile);
   document.getElementById("profileSave").addEventListener("click", submitProfile);
+  document.getElementById("resendVerify").addEventListener("click", function(){
+    var btn = document.getElementById("resendVerify");
+    var msg = document.getElementById("resendMsg");
+    msg.hidden = true;
+    btn.disabled = true;
+    fetch("/api/auth/resend-verification", { method: "POST", credentials: "same-origin" })
+      .then(function(res){ return res.json(); })
+      .then(function(){
+        btn.disabled = false;
+        msg.textContent = "If your email is still unverified, a new verification email is on its way — check your inbox (and spam).";
+        msg.hidden = false;
+      }).catch(function(){
+        btn.disabled = false;
+        msg.textContent = "Couldn't reach the server — try again.";
+        msg.hidden = false;
+      });
+  });
   document.getElementById("signOut").addEventListener("click", function(){
     fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).then(function(){
       setUser(null);
