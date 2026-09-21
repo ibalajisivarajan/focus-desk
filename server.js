@@ -495,7 +495,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'", "https://api.open-meteo.com", "https://geocoding-api.open-meteo.com"],
+      connectSrc: ["'self'", "https://api.open-meteo.com", "https://geocoding-api.open-meteo.com", "https://api.bigdatacloud.net"],
       objectSrc: ["'none'"],
     },
   },

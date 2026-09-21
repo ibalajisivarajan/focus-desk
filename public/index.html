@@ -39,8 +39,7 @@
     border:1px solid var(--line)}
   .title h1{
     font-family:"Baloo 2","Inter",sans-serif;font-weight:800;
-    font-size:clamp(26px,7vw,38px);letter-spacing:-.01em;line-height:1.1;color:var(--ink);
-    white-space:nowrap;
+    font-size:clamp(26px,7vw,38px);letter-spacing:-.01em;line-height:1.02;color:var(--ink);
   }
   .title h1 .dot{color:var(--accent)}
   .head-right{
@@ -351,7 +350,7 @@
   <header class="dash">
     <div class="title">
       <img class="brand" src="img/logo.png" alt="Focus Desk logo">
-      <h1>Focus Desk<span class="dot">.</span></h1>
+      <h1>Focus<br>Desk<span class="dot">.</span></h1>
     </div>
     <div class="head-right">
       <div class="menu-wrap" id="menuWrap">
@@ -1286,6 +1285,7 @@
   };
 
   var lastWeatherD = null;   // last Open-Meteo payload (drives the per-minute local clock)
+  var reverseTried = false;  // one reverse-geocode attempt per page load (self-heal)
   var lastWeatherCfg = null;
 
   function defaultUnit(){
@@ -1344,6 +1344,12 @@
   function renderWeather(d, cfg){
     lastWeatherD = d || null;
     lastWeatherCfg = cfg;
+    // Self-heal: coords but no place label (reverse-geocode was blocked or
+    // failed earlier) — try once per page load to resolve the city name.
+    if(!reverseTried && cfg && typeof cfg.lat === "number" && !cfg.label){
+      reverseTried = true;
+      reverseLabel(cfg.lat, cfg.lon);
+    }
     var toggle = document.getElementById("unitToggle");
     if(toggle) toggle.textContent = cfg.unit === "fahrenheit" ? "°F" : "°C";
     if(!d){
