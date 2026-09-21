@@ -122,7 +122,38 @@ Google Cloud OAuth clients are free.
 
 The first Google sign-in creates an account; if it's the very first account
 on the server it adopts any pre-existing data, same as username signup.
-Google-created accounts have no password and can only sign in via Google.
+Google-created accounts have no password and can only sign in via Google —
+until the owner sets one through the forgot-password flow, which also links
+both login methods to the same account. If the Google email is already
+registered (and Google verified it), the Google login links to that existing
+account automatically.
+
+## Email: signup, verification, password reset (optional)
+
+New accounts sign up with an **email address** (plus a display name) and can
+sign in with email or username. The server sends a verification email on
+signup and powers **Forgot password?** reset links. Both only activate when
+outgoing email is configured — otherwise signup still works and the
+forgot-password link stays hidden.
+
+Free, no-credit-card option: send through your own Gmail account using an
+[app password](https://myaccount.google.com/apppasswords):
+
+1. In your Google account, turn on **2-Step Verification**, then create an
+   **App password** (choose *Mail*). Google shows a 16-character password —
+   copy it.
+2. Add to the server's environment:
+   - `SMTP_USER` — your Gmail address (e.g. `you@gmail.com`)
+   - `SMTP_APP_PASSWORD` — the 16-character app password (no spaces)
+   - `SMTP_FROM` — optional, defaults to `SMTP_USER`
+   - Locally: `SMTP_USER=... SMTP_APP_PASSWORD=... node server.js`
+   - Render: Dashboard → your service → **Environment** → add the variables
+     (Render redeploys automatically). Never paste the app password in chat —
+     enter it directly in Render.
+
+Reset links expire after 1 hour and are single-use; verification links last
+24 hours. The forgot-password endpoint always responds the same way whether
+or not the email is registered, so it can't be used to probe for accounts.
 
 ## Security notes
 
@@ -131,7 +162,9 @@ Google-created accounts have no password and can only sign in via Google.
 - API rate limiting; JSON body size capped at 256 KB; stricter limits on auth
   endpoints.
 - All inputs validated (lengths, id format, `YYYY-MM-DD` dates, enum modes).
-- Auth: username/password (scrypt-hashed) or Google OAuth (ID token signature
-  verified against Google's keys, CSRF state token, 15 s upstream timeouts).
-  Sessions are HTTP-only `SameSite=Lax` cookies, 30-day expiry.
+- Auth: email/username + password (scrypt-hashed) or Google OAuth (ID token
+  signature verified against Google's keys, CSRF state token, 15 s upstream
+  timeouts). Password-reset and email-verification tokens are single-use,
+  hashed at rest, and short-lived (1 h / 24 h). Sessions are HTTP-only
+  `SameSite=Lax` cookies, 30-day expiry.
 - Container runs as a non-root user; database lives on a mounted volume.

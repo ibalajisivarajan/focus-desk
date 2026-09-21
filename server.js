@@ -5,9 +5,10 @@
 //     credit card, data persists independently of the web host.
 // Same SQL either way: Turso speaks the SQLite dialect.
 //
-// Auth: username + password (scrypt-hashed), session cookie. Every /api/*
-// route except /api/auth/* requires a session, and all data is scoped to
-// the signed-in user. The first account created adopts any pre-auth data.
+// Auth: email + password (scrypt-hashed) or Google OAuth, session cookie.
+// Every /api/* route except /api/auth/* requires a session, and all data is
+// scoped to the signed-in user. The first account created adopts any pre-auth
+// data. Password reset + email verification go out over SMTP when configured.
 
 import express from 'express';
 import helmet from 'helmet';
@@ -15,6 +16,7 @@ import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { createClient } from '@libsql/client';
+import nodemailer from 'nodemailer';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +39,16 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const googleEnabled = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 const OAUTH_STATE_COOKIE = 'fd_oauth_state';
+
+/* Outgoing email (verification + password reset). Optional: only enabled
+   when SMTP credentials are set. Uses Gmail's SMTP with an app password —
+   free, no credit card, no domain verification needed.
+   EMAIL_LOG_FILE (dev only): write emails to this file instead of sending. */
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_APP_PASSWORD = process.env.SMTP_APP_PASSWORD || '';
+const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER;
+const EMAIL_LOG_FILE = process.env.EMAIL_LOG_FILE || '';
+const emailEnabled = Boolean((SMTP_USER && SMTP_APP_PASSWORD) || EMAIL_LOG_FILE);
 
 /* ---------------- database ---------------- */
 let client;
@@ -130,6 +142,30 @@ async function initDb() {
     }
   }
   await client.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)');
+
+  // Email auth: verification flag + single-use token tables (idempotent).
+  try {
+    await client.execute({ sql: 'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0', args: [] });
+  } catch (e) {
+    if (!/duplicate column/i.test(String(e && e.message))) throw e;
+  }
+  // SQLite unique indexes allow multiple NULLs, so legacy username-only
+  // accounts are unaffected.
+  await client.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+  await client.batch([
+    `CREATE TABLE IF NOT EXISTS password_resets (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS email_verifications (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_resets_expires ON password_resets(expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_verifications_expires ON email_verifications(expires_at)',
+  ].map((sql) => ({ sql, args: [] })));
 
   await client.execute({ sql: 'INSERT OR IGNORE INTO notes (id, text, updated_at) VALUES (1, ?, ?)', args: ['', Date.now()] });
 }
@@ -230,7 +266,7 @@ async function sessionUser(req) {
     await run('DELETE FROM sessions WHERE token = ?', token);
     return null;
   }
-  return get('SELECT id, name FROM users WHERE id = ?', s.user_id);
+  return get('SELECT id, name, email, email_verified FROM users WHERE id = ?', s.user_id);
 }
 
 async function authRequired(req, res, next) {
@@ -245,6 +281,72 @@ function validName(v) {
 }
 function validPassword(v) {
   return typeof v === 'string' && v.length >= 8 && v.length <= 128;
+}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+function validEmail(v) {
+  return typeof v === 'string' && v.trim().length <= 254 && EMAIL_RE.test(v.trim());
+}
+function normalizeEmail(v) {
+  return v.trim().toLowerCase();
+}
+// Single-use email tokens: the raw token goes in the link, only its
+// sha256 hash is stored, so a database read alone can't redeem them.
+function newEmailToken() {
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  return { token, tokenHash };
+}
+function appBaseUrl(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || req.protocol;
+  return `${proto}://${req.headers.host}`;
+}
+
+/* ---------------- outgoing email ---------------- */
+let mailTransport = null;
+function getMailTransport() {
+  if (mailTransport || !SMTP_USER || !SMTP_APP_PASSWORD) return mailTransport;
+  mailTransport = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user: SMTP_USER, pass: SMTP_APP_PASSWORD },
+  });
+  return mailTransport;
+}
+// Returns true when the email was handed off (sent or logged), false when
+// email isn't configured or delivery failed. Never throws.
+async function sendMail(to, subject, text) {
+  try {
+    if (SMTP_USER && SMTP_APP_PASSWORD) {
+      await getMailTransport().sendMail({ from: SMTP_FROM, to, subject, text });
+      return true;
+    }
+    if (EMAIL_LOG_FILE) {
+      fs.appendFileSync(EMAIL_LOG_FILE,
+        `--- ${new Date().toISOString()}\nTo: ${to}\nSubject: ${subject}\n\n${text}\n\n`);
+      return true;
+    }
+  } catch (e) {
+    console.error('sendMail failed:', e && e.message);
+  }
+  return false;
+}
+function verificationEmailBody(name, link) {
+  return `Hi ${name},\n\nPlease verify your Focus Desk email address by opening this link:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can ignore this email.\n`;
+}
+function resetEmailBody(name, link) {
+  return `Hi ${name},\n\nSomeone requested a password reset for your Focus Desk account. Open this link to choose a new password:\n\n${link}\n\nThis link expires in 1 hour and can only be used once. If you didn't request this, you can safely ignore this email — your password won't change.\n`;
+}
+// Extra throttle on email-triggering endpoints: max 3 sends per email/hour,
+// so one address can't be spammed through us. Best-effort in-memory.
+const emailSendLog = new Map(); // key -> array of timestamps
+function emailThrottleOk(key) {
+  const now = Date.now();
+  const arr = (emailSendLog.get(key) || []).filter((t) => now - t < 3600 * 1000);
+  if (arr.length >= 3) return false;
+  arr.push(now);
+  emailSendLog.set(key, arr);
+  return true;
 }
 
 // The very first account (username or Google) adopts any data created
@@ -398,34 +500,54 @@ app.get('/healthz', (req, res) => res.json({ ok: true, time: new Date().toISOStr
 app.post('/api/auth/signup', authLimiter, ah(async (req, res) => {
   const b = bodyOf(req);
   const name = typeof b.name === 'string' ? b.name.trim() : '';
+  const email = typeof b.email === 'string' ? normalizeEmail(b.email) : '';
   if (!validName(name)) return res.status(400).json({ error: 'name must be 1-40 characters' });
+  if (!validEmail(b.email)) return res.status(400).json({ error: 'enter a valid email address' });
   if (!validPassword(b.password)) return res.status(400).json({ error: 'password must be 8-128 characters' });
   if (await get('SELECT id FROM users WHERE lower(name) = lower(?)', name)) {
     return res.status(409).json({ error: 'that name is taken' });
   }
+  if (await get('SELECT id FROM users WHERE email = ?', email)) {
+    return res.status(409).json({ error: 'that email is already registered' });
+  }
   const { salt, hash } = await hashPassword(b.password);
   const id = uid();
   const now = Date.now();
-  await run('INSERT INTO users (id, name, pass_salt, pass_hash, created_at) VALUES (?,?,?,?,?)',
-    id, name, salt, hash, now);
+  await run('INSERT INTO users (id, name, email, email_verified, pass_salt, pass_hash, created_at) VALUES (?,?,?,?,?,?,?)',
+    id, name, email, 0, salt, hash, now);
   // The very first account adopts any data created before auth existed.
   if (Number((await get('SELECT COUNT(*) AS c FROM users')).c) === 1) {
     await adoptLegacyData(id);
   }
+  // Verification email is best-effort: signup succeeds even if mail isn't
+  // configured or delivery fails.
+  if (emailEnabled && emailThrottleOk('verify:' + email)) {
+    const { token, tokenHash } = newEmailToken();
+    await run('INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES (?,?,?)',
+      tokenHash, id, now + 24 * 3600 * 1000);
+    const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${token}`;
+    sendMail(email, 'Verify your Focus Desk email', verificationEmailBody(name, link));
+  }
   await createSession(req, res, id);
-  res.status(201).json({ ok: true, user: { id, name } });
+  res.status(201).json({ ok: true, user: { id, name, email, email_verified: 0 } });
 }));
 
 app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
   const b = bodyOf(req);
-  const name = typeof b.name === 'string' ? b.name.trim() : '';
-  const u = name ? await get('SELECT id, name, pass_salt, pass_hash FROM users WHERE lower(name) = lower(?)', name) : null;
-  // Google-created accounts have no password — they can only sign in via Google.
+  // New clients send {identifier}; the old field name is still accepted.
+  const identifier = typeof b.identifier === 'string' ? b.identifier.trim()
+    : (typeof b.name === 'string' ? b.name.trim() : '');
+  const idLower = identifier.toLowerCase();
+  const u = identifier ? await get(
+    'SELECT id, name, email, email_verified, pass_salt, pass_hash FROM users WHERE lower(email) = ? OR lower(name) = ?',
+    idLower, idLower) : null;
+  // Google-created accounts have no password — they can only sign in via Google
+  // (until the owner sets a password through the reset flow).
   if (!u || !u.pass_hash || !(await verifyPassword(b.password || '', u.pass_salt, u.pass_hash))) {
-    return res.status(401).json({ error: 'invalid name or password' });
+    return res.status(401).json({ error: 'invalid email/username or password' });
   }
   await createSession(req, res, u.id);
-  res.json({ ok: true, user: { id: u.id, name: u.name } });
+  res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, email_verified: u.email_verified } });
 }));
 
 app.post('/api/auth/logout', ah(async (req, res) => {
@@ -435,15 +557,89 @@ app.post('/api/auth/logout', ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Forgot password: email a single-use reset link. Always responds the same
+// way so the endpoint can't be used to enumerate accounts.
+app.post('/api/auth/forgot-password', authLimiter, ah(async (req, res) => {
+  const b = bodyOf(req);
+  const email = typeof b.email === 'string' ? normalizeEmail(b.email) : '';
+  // Opportunistic cleanup of expired tokens.
+  run('DELETE FROM password_resets WHERE expires_at < ?', Date.now()).catch(() => {});
+  if (emailEnabled && validEmail(b.email) && emailThrottleOk('reset:' + email)) {
+    const u = await get('SELECT id, name, email FROM users WHERE email = ?', email);
+    if (u && u.email) {
+      const { token, tokenHash } = newEmailToken();
+      const now = Date.now();
+      await run('DELETE FROM password_resets WHERE user_id = ?', u.id);
+      await run('INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?,?,?)',
+        tokenHash, u.id, now + 3600 * 1000);
+      const link = `${appBaseUrl(req)}/?reset_token=${token}`;
+      sendMail(u.email, 'Reset your Focus Desk password', resetEmailBody(u.name, link));
+    }
+  }
+  res.json({ ok: true, message: 'If an account exists for that email, a reset link is on its way.' });
+}));
+
+// Redeem a reset link and set a new password. Single-use: the token is
+// deleted on success (and any older tokens for the user with it).
+app.post('/api/auth/reset-password', authLimiter, ah(async (req, res) => {
+  const b = bodyOf(req);
+  if (!validPassword(b.password)) return res.status(400).json({ error: 'password must be 8-128 characters' });
+  const token = typeof b.token === 'string' ? b.token.trim() : '';
+  if (!/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({ error: 'invalid or expired reset link' });
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const row = await get('SELECT user_id, expires_at FROM password_resets WHERE token_hash = ?', tokenHash);
+  if (!row || Number(row.expires_at) < Date.now()) {
+    if (row) await run('DELETE FROM password_resets WHERE token_hash = ?', tokenHash);
+    return res.status(400).json({ error: 'invalid or expired reset link' });
+  }
+  const { salt, hash } = await hashPassword(b.password);
+  await run('UPDATE users SET pass_salt = ?, pass_hash = ? WHERE id = ?', salt, hash, row.user_id);
+  await run('DELETE FROM password_resets WHERE user_id = ?', row.user_id);
+  res.json({ ok: true });
+}));
+
+// Email verification link (24h, single-use). Login never blocks on it.
+app.get('/api/auth/verify-email', authLimiter, ah(async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  let ok = false;
+  if (/^[a-f0-9]{64}$/.test(token)) {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const row = await get('SELECT user_id, expires_at FROM email_verifications WHERE token_hash = ?', tokenHash);
+    if (row && Number(row.expires_at) >= Date.now()) {
+      await run('UPDATE users SET email_verified = 1 WHERE id = ?', row.user_id);
+      ok = true;
+    }
+    if (row) await run('DELETE FROM email_verifications WHERE token_hash = ?', tokenHash);
+  }
+  res.redirect('/?' + (ok ? 'verified=1' : 'verified=0'));
+}));
+
+// Re-send the verification email to the signed-in user.
+app.post('/api/auth/resend-verification', authLimiter, ah(async (req, res) => {
+  const user = await sessionUser(req);
+  if (!user) return res.status(401).json({ error: 'not signed in' });
+  const full = await get('SELECT id, name, email, email_verified FROM users WHERE id = ?', user.id);
+  if (emailEnabled && full && full.email && !full.email_verified && emailThrottleOk('verify:' + full.email)) {
+    const { token, tokenHash } = newEmailToken();
+    await run('DELETE FROM email_verifications WHERE user_id = ?', full.id);
+    await run('INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES (?,?,?)',
+      tokenHash, full.id, Date.now() + 24 * 3600 * 1000);
+    const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${token}`;
+    sendMail(full.email, 'Verify your Focus Desk email', verificationEmailBody(full.name, link));
+  }
+  res.json({ ok: true });
+}));
+
 app.get('/api/auth/me', ah(async (req, res) => {
   const user = await sessionUser(req);
   if (!user) return res.status(401).json({ error: 'not signed in' });
   res.json({ user });
 }));
 
-// Which sign-in methods the server offers (lets the UI hide Google when unconfigured).
+// Which sign-in methods the server offers (lets the UI hide Google and the
+// forgot-password link when unconfigured).
 app.get('/api/auth/providers', (req, res) => {
-  res.json({ google: googleEnabled });
+  res.json({ google: googleEnabled, email: emailEnabled });
 });
 
 // Step 1: redirect the browser to Google's consent screen.
@@ -499,8 +695,18 @@ app.get('/api/auth/google/callback', authLimiter, ah(async (req, res) => {
   }
 
   const sub = String(payload.sub);
-  const email = typeof payload.email === 'string' ? payload.email : '';
+  const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
+  const emailVerifiedByGoogle = payload.email_verified === true;
   let user = await get('SELECT id, name FROM users WHERE google_sub = ?', sub);
+  if (!user && email && emailVerifiedByGoogle) {
+    // This Google account owns a verified email that's already registered:
+    // link it instead of creating a duplicate account.
+    const existing = await get('SELECT id, name FROM users WHERE email = ?', email);
+    if (existing) {
+      await run('UPDATE users SET google_sub = ?, email_verified = 1 WHERE id = ?', sub, existing.id);
+      user = existing;
+    }
+  }
   if (!user) {
     // First Google sign-in: create an account (name from profile, deduped).
     const base = (typeof payload.name === 'string' && payload.name.trim()) || email.split('@')[0] || 'user';
@@ -510,8 +716,8 @@ app.get('/api/auth/google/callback', authLimiter, ah(async (req, res) => {
     }
     const id = uid();
     const now = Date.now();
-    await run('INSERT INTO users (id, name, pass_salt, pass_hash, google_sub, email, created_at) VALUES (?,?,?,?,?,?,?)',
-      id, gname, '', '', sub, email, now);
+    await run('INSERT INTO users (id, name, pass_salt, pass_hash, google_sub, email, email_verified, created_at) VALUES (?,?,?,?,?,?,?,?)',
+      id, gname, '', '', sub, email, emailVerifiedByGoogle ? 1 : 0, now);
     if (Number((await get('SELECT COUNT(*) AS c FROM users')).c) === 1) {
       await adoptLegacyData(id);
     }

@@ -166,7 +166,7 @@
   .auth-tabs{display:flex;background:var(--bg);border-radius:10px;padding:4px;margin:4px 0}
   .auth-tab{flex:1;padding:8px;border-radius:8px;font-weight:600;font-size:14px;color:var(--muted)}
   .auth-tab.active{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
-  .auth-card input[type=text],.auth-card input[type=password]{
+  .auth-card input[type=text],.auth-card input[type=password],.auth-card input[type=email]{
     font:inherit;color:var(--ink);background:var(--bg);
     border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;
   }
@@ -175,6 +175,22 @@
     border-radius:10px;padding:10px 12px;
   }
   .auth-error[hidden]{display:none}
+  .auth-ok{
+    background:var(--green-soft);color:var(--green);font-size:13px;font-weight:600;
+    border-radius:10px;padding:10px 12px;
+  }
+  .auth-ok[hidden]{display:none}
+  .linklike{
+    background:none;border:0;color:var(--muted);text-decoration:underline;
+    font-size:13px;padding:8px;cursor:pointer;font-family:inherit;
+  }
+  .linklike[hidden]{display:none}
+  .flash{
+    position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;
+    background:var(--green-soft);color:var(--green);font-weight:600;font-size:14px;
+    padding:10px 18px;border-radius:12px;box-shadow:var(--shadow);max-width:90vw;text-align:center;
+  }
+  .flash.err{background:var(--accent-soft);color:var(--red)}
   .auth-hint{text-align:center;color:var(--muted);font-size:12px}
   .auth-divider{display:flex;align-items:center;gap:10px;margin:2px 0;color:var(--muted);font-size:13px}
   .auth-divider[hidden]{display:none}
@@ -210,21 +226,43 @@
 <div class="auth-overlay" id="authOverlay" hidden>
   <div class="auth-card">
     <h1>Focus Desk<span class="dot">.</span></h1>
-    <p class="auth-sub" id="authSub">Sign in to your desk</p>
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="tabSignin">Sign in</button>
-      <button class="auth-tab" id="tabSignup">Create account</button>
-    </div>
-    <input type="text" id="authName" placeholder="Username" maxlength="40" autocomplete="username">
-    <input type="password" id="authPass" placeholder="Password (8+ characters)" autocomplete="current-password">
-    <div class="auth-error" id="authError" hidden></div>
-    <button class="btn" id="authGo">Sign in</button>
-    <div class="auth-divider" id="authDivider" hidden><span>or</span></div>
-    <button class="google-btn" id="googleBtn" hidden>
+    <div id="authView">
+      <p class="auth-sub" id="authSub">Sign in to your desk</p>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabSignin">Sign in</button>
+        <button class="auth-tab" id="tabSignup">Create account</button>
+      </div>
+      <input type="text" id="authName" placeholder="Email or username" maxlength="40" autocomplete="username">
+      <input type="email" id="authEmail" placeholder="Email address" maxlength="254" autocomplete="email" hidden>
+      <input type="password" id="authPass" placeholder="Password (8+ characters)" autocomplete="current-password">
+      <div class="auth-error" id="authError" hidden></div>
+      <div class="auth-ok" id="authOk" hidden></div>
+      <button class="btn" id="authGo">Sign in</button>
+      <button class="linklike" id="forgotLink" hidden>Forgot password?</button>
+      <div class="auth-divider" id="authDivider" hidden><span>or</span></div>
+      <button class="google-btn" id="googleBtn" hidden>
       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.34A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.41 5.41 0 0 1 0-3.44V4.94H.96a9 9 0 0 0 0 8.12l3.01-2.34z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.94l3.01 2.34C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
       Continue with Google
     </button>
-    <p class="auth-hint">Your data is private to your account.</p>
+      <p class="auth-hint">Your data is private to your account.</p>
+    </div>
+    <div id="forgotView" hidden>
+      <p class="auth-sub">Enter your account email and we'll send you a reset link.</p>
+      <input type="email" id="forgotEmail" placeholder="Email address" maxlength="254" autocomplete="email">
+      <div class="auth-error" id="forgotError" hidden></div>
+      <div class="auth-ok" id="forgotOk" hidden></div>
+      <button class="btn" id="forgotGo">Send reset link</button>
+      <button class="linklike" id="forgotBack">← Back to sign in</button>
+    </div>
+    <div id="resetView" hidden>
+      <p class="auth-sub">Choose a new password for your account.</p>
+      <input type="password" id="resetPass" placeholder="New password (8+ characters)" autocomplete="new-password">
+      <input type="password" id="resetPass2" placeholder="Confirm new password" autocomplete="new-password">
+      <div class="auth-error" id="resetError" hidden></div>
+      <div class="auth-ok" id="resetOk" hidden></div>
+      <button class="btn" id="resetGo">Set new password</button>
+      <button class="linklike" id="resetBack">← Back to sign in</button>
+    </div>
   </div>
 </div>
 
@@ -817,23 +855,64 @@
     el.textContent = msg;
     el.hidden = false;
   }
+  var emailSendingOn = false; // from /api/auth/providers: enables forgot-password UI
+  var pendingResetToken = null;
+
+  function showAuthView(which){
+    document.getElementById("authView").hidden = which !== "auth";
+    document.getElementById("forgotView").hidden = which !== "forgot";
+    document.getElementById("resetView").hidden = which !== "reset";
+  }
+  function flash(msg, isErr){
+    var d = document.createElement("div");
+    d.className = "flash" + (isErr ? " err" : "");
+    d.textContent = msg;
+    document.body.appendChild(d);
+    setTimeout(function(){ if(d.parentNode) d.parentNode.removeChild(d); }, 4500);
+  }
   function setAuthMode(mode){
     authMode = mode;
+    showAuthView("auth");
     document.getElementById("tabSignin").classList.toggle("active", mode === "signin");
     document.getElementById("tabSignup").classList.toggle("active", mode === "signup");
     document.getElementById("authGo").textContent = mode === "signin" ? "Sign in" : "Create account";
+    document.getElementById("authName").placeholder = mode === "signin" ? "Email or username" : "Display name";
+    document.getElementById("authEmail").hidden = mode !== "signup";
+    document.getElementById("forgotLink").hidden = !(mode === "signin" && emailSendingOn);
     document.getElementById("authSub").textContent = mode === "signin"
       ? "Sign in to your desk"
       : "Create your account — the first one claims this desk's data";
     hideAuthError();
+    hideAuthOk();
+  }
+  function hideAuthOk(){ document.getElementById("authOk").hidden = true; }
+  function showAuthOk(msg){
+    var el = document.getElementById("authOk");
+    el.textContent = msg;
+    el.hidden = false;
+  }
+  function validEmailClient(v){
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(v).trim());
   }
 
   function submitAuth(){
     hideAuthError();
+    hideAuthOk();
     var name = document.getElementById("authName").value.trim();
     var pass = document.getElementById("authPass").value;
-    if(!name){ showAuthError("Enter a username."); return; }
-    if(pass.length < 8){ showAuthError("Password needs at least 8 characters."); return; }
+    var body, signedUpEmail = null;
+    if(authMode === "signup"){
+      var email = document.getElementById("authEmail").value.trim();
+      if(!name){ showAuthError("Enter a display name."); return; }
+      if(!validEmailClient(email)){ showAuthError("Enter a valid email address."); return; }
+      if(pass.length < 8){ showAuthError("Password needs at least 8 characters."); return; }
+      body = { name: name, email: email, password: pass };
+      signedUpEmail = email;
+    } else {
+      if(!name){ showAuthError("Enter your email or username."); return; }
+      if(pass.length < 8){ showAuthError("Password needs at least 8 characters."); return; }
+      body = { identifier: name, password: pass };
+    }
     var go = document.getElementById("authGo");
     go.disabled = true;
     go.textContent = "One moment…";
@@ -841,9 +920,9 @@
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name, password: pass })
+      body: JSON.stringify(body)
     }).then(function(res){
-      return res.json().then(function(body){ return { status: res.status, body: body }; });
+      return res.json().then(function(bd){ return { status: res.status, body: bd }; });
     }).then(function(r){
       go.disabled = false;
       setAuthMode(authMode); // restores the button label
@@ -852,6 +931,9 @@
         setUser(r.body.user);
         hideAuth();
         loadState();
+        if(authMode === "signup" && emailSendingOn && signedUpEmail){
+          flash("Verification email sent to " + signedUpEmail);
+        }
       } else {
         showAuthError((r.body && r.body.error) || "Something went wrong — try again.");
       }
@@ -862,17 +944,86 @@
     });
   }
 
+  function submitForgot(){
+    var errEl = document.getElementById("forgotError");
+    var okEl = document.getElementById("forgotOk");
+    errEl.hidden = true; okEl.hidden = true;
+    var email = document.getElementById("forgotEmail").value.trim();
+    if(!validEmailClient(email)){ errEl.textContent = "Enter a valid email address."; errEl.hidden = false; return; }
+    var go = document.getElementById("forgotGo");
+    go.disabled = true;
+    fetch("/api/auth/forgot-password", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email })
+    }).then(function(res){ return res.json(); }).then(function(bd){
+      go.disabled = false;
+      okEl.textContent = (bd && bd.message) || "If an account exists for that email, a reset link is on its way.";
+      okEl.hidden = false;
+    }).catch(function(){
+      go.disabled = false;
+      errEl.textContent = "Can't reach the server — check your connection.";
+      errEl.hidden = false;
+    });
+  }
+
+  function submitReset(){
+    var errEl = document.getElementById("resetError");
+    var okEl = document.getElementById("resetOk");
+    errEl.hidden = true; okEl.hidden = true;
+    var p1 = document.getElementById("resetPass").value;
+    var p2 = document.getElementById("resetPass2").value;
+    if(p1.length < 8){ errEl.textContent = "Password needs at least 8 characters."; errEl.hidden = false; return; }
+    if(p1 !== p2){ errEl.textContent = "Passwords don't match."; errEl.hidden = false; return; }
+    if(!pendingResetToken){ errEl.textContent = "This reset link is missing its token — request a new one."; errEl.hidden = false; return; }
+    var go = document.getElementById("resetGo");
+    go.disabled = true;
+    fetch("/api/auth/reset-password", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: pendingResetToken, password: p1 })
+    }).then(function(res){
+      return res.json().then(function(bd){ return { status: res.status, body: bd }; });
+    }).then(function(r){
+      go.disabled = false;
+      if(r.status === 200){
+        pendingResetToken = null;
+        document.getElementById("resetPass").value = "";
+        document.getElementById("resetPass2").value = "";
+        okEl.textContent = "Password updated — sign in with your new password.";
+        okEl.hidden = false;
+      } else {
+        errEl.textContent = (r.body && r.body.error) || "Something went wrong — try again.";
+        errEl.hidden = false;
+      }
+    }).catch(function(){
+      go.disabled = false;
+      errEl.textContent = "Can't reach the server — check your connection.";
+      errEl.hidden = false;
+    });
+  }
+
   document.getElementById("tabSignin").addEventListener("click", function(){ setAuthMode("signin"); });
   document.getElementById("tabSignup").addEventListener("click", function(){ setAuthMode("signup"); });
   document.getElementById("authGo").addEventListener("click", submitAuth);
   document.getElementById("authPass").addEventListener("keydown", function(e){ if(e.key === "Enter") submitAuth(); });
   document.getElementById("authName").addEventListener("keydown", function(e){ if(e.key === "Enter") submitAuth(); });
+  document.getElementById("authEmail").addEventListener("keydown", function(e){ if(e.key === "Enter") submitAuth(); });
+  document.getElementById("forgotLink").addEventListener("click", function(){ showAuthView("forgot"); });
+  document.getElementById("forgotBack").addEventListener("click", function(){ setAuthMode("signin"); });
+  document.getElementById("forgotGo").addEventListener("click", submitForgot);
+  document.getElementById("forgotEmail").addEventListener("keydown", function(e){ if(e.key === "Enter") submitForgot(); });
+  document.getElementById("resetBack").addEventListener("click", function(){ pendingResetToken = null; setAuthMode("signin"); });
+  document.getElementById("resetGo").addEventListener("click", submitReset);
   document.getElementById("signOut").addEventListener("click", function(){
     fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).then(function(){
       setUser(null);
       try{ localStorage.removeItem(CACHE_KEY); }catch(e){}
       setQueue([]);
       showAuth();
+      setAuthMode("signin");
     }, function(){});
   });
 
@@ -894,11 +1045,16 @@
       try{ window.history.replaceState({}, "", window.location.pathname); }catch(e){}
     }
   })();
-  // Only show the Google button when the server has it configured.
+  // Only show the Google button when the server has it configured; same for
+  // the forgot-password link (needs outgoing email configured).
   fetch("/api/auth/providers", { credentials: "same-origin" }).then(function(r){ return r.json(); }).then(function(p){
     if(p && p.google){
       document.getElementById("googleBtn").hidden = false;
       document.getElementById("authDivider").hidden = false;
+    }
+    if(p && p.email){
+      emailSendingOn = true;
+      setAuthMode(authMode); // re-evaluates the forgot-link visibility
     }
   }).catch(function(){});
   document.getElementById("googleBtn").addEventListener("click", function(){
@@ -1031,11 +1187,31 @@
 
   /* ---------- boot ---------- */
   function boot(){
+    // Password-reset links (/?reset_token=…) and email-verification results
+    // (/?verified=1|0) land here. Clean them out of the URL right away.
+    var qs = null;
+    try{ qs = new URLSearchParams(window.location.search); }catch(e){}
+    var resetToken = qs ? qs.get("reset_token") : null;
+    var verified = qs ? qs.get("verified") : null;
+    if(qs && (qs.has("reset_token") || qs.has("verified"))){
+      try{ window.history.replaceState({}, "", window.location.pathname); }catch(e){}
+    }
+    if(resetToken) pendingResetToken = resetToken;
+    if(verified === "1") flash("Email verified ✓");
+    else if(verified === "0") flash("That verification link was invalid or expired.", true);
     fetch("/api/auth/me", { credentials: "same-origin" }).then(function(res){
       if(res.ok){
-        return res.json().then(function(b){ setUser(b.user); hideAuth(); loadState(); });
+        return res.json().then(function(b){
+          setUser(b.user); hideAuth(); loadState();
+          if(pendingResetToken){ showAuth(); showAuthView("reset"); }
+        });
       }
-      if(res.status === 401){ showAuth(); return; }
+      if(res.status === 401){
+        showAuth();
+        if(pendingResetToken) showAuthView("reset");
+        else setAuthMode("signin");
+        return;
+      }
       loadState();
     }).catch(function(){
       loadState(); // offline: fall back to the cached state
