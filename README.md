@@ -5,7 +5,9 @@ pomodoro timer, quick notes, daily stats header). Same warm-paper UI as the sing
 version, but all data lives in a **SQLite database on the server**, so it follows you
 across devices.
 
-- **Backend:** Node.js + Express, built-in `node:sqlite` (no native modules, no build step)
+- **Backend:** Node.js + Express, libSQL (`@libsql/client`) — a local SQLite file by
+  default, or a free Turso cloud database when `TURSO_URL`/`TURSO_TOKEN` are set.
+  Same SQL either way; no native modules, no build step.
 - **Frontend:** the original UI, served statically; talks to the server via `fetch()`
 - **Offline:** if the API is unreachable, a banner appears, writes are queued in
   `localStorage`, and they sync automatically when the connection returns (best effort)
@@ -20,11 +22,13 @@ npm start        # → http://localhost:3000
 
 Environment variables (see `.env.example`):
 
-| Variable   | Default  | Purpose                              |
-|------------|----------|--------------------------------------|
-| `PORT`     | `3000`   | HTTP port to listen on               |
-| `DATA_DIR` | `./data` | Directory holding `focusdesk.db`     |
-| `DB_PATH`  | —        | Override the database file directly  |
+| Variable      | Default  | Purpose                                                        |
+|---------------|----------|----------------------------------------------------------------|
+| `PORT`        | `3000`   | HTTP port to listen on                                         |
+| `DATA_DIR`    | `./data` | Directory holding the local `focusdesk.db` (local mode)        |
+| `DB_PATH`     | —        | Override the database file directly (local mode)               |
+| `TURSO_URL`   | —        | e.g. `libsql://my-db.turso.io` — switches to Turso cloud DB    |
+| `TURSO_TOKEN` | —        | Turso auth token (required with `TURSO_URL`)                    |
 
 ## API
 
@@ -48,57 +52,39 @@ The API is rate-limited (600 requests / 15 min per IP).
 
 ## Hosting
 
-**Easiest path: Render one-click deploy.** Push this folder to a GitHub repo, then in
-Render: *New → Blueprint* → select the repo. `render.yaml` builds the Docker image,
-attaches a 1 GB persistent disk at `/data`, and wires the health check. Note: Render
-disks require a paid instance, so the blueprint uses the **Starter** plan (~$7/mo);
-the free plan works for a demo but wipes the SQLite database on every restart.
+### Recommended: Render (free) + Turso (free) — $0, data persists
 
-### Railway
+Render's free web tier can't keep a database file (no disk), so the app stores its
+data in **Turso**, a hosted SQLite database with a generous free tier (no credit
+card). The server itself runs free on Render.
 
-1. Push to GitHub, then *New Project → Deploy from GitHub repo* in Railway.
-2. It auto-detects the Dockerfile. Add a **Volume** (e.g. 1 GB) mounted at `/data`.
-3. Set the `DATA_DIR` variable to `/data`. Done — Railway gives you a public URL.
+**Step 1 — create the free database (~2 min):**
+1. Go to [dashboard.turso.tech](https://dashboard.turso.tech) and sign up (GitHub login works).
+2. Click **Create Database**, name it e.g. `focus-desk`.
+3. Open the database → copy the **URL** (looks like `libsql://focus-desk-….turso.io`).
+4. Create a token: in the database view, **Tokens → Create Token** (or `turso db tokens create focus-desk` in their CLI) and copy it.
 
-### Fly.io
+**Step 2 — deploy with one click:**
+1. Click: [Deploy to Render](https://render.com/deploy?repo=https://github.com/ibalajisivarajan/focus-desk)
+   (or: Render dashboard → *New → Blueprint* → paste the repo URL).
+2. Log in with GitHub if asked. Render reads `render.yaml` and shows the plan (free).
+3. When prompted, paste `TURSO_URL` and `TURSO_TOKEN` from step 1.
+4. Click **Apply**. A few minutes later your app is live at
+   `https://focus-desk-….onrender.com`.
 
-```bash
-fly launch            # accept the detected Dockerfile setup
-fly volumes create focus_data --size 1 --region <nearest, e.g. sjc>
-```
+Notes: Render's free tier spins the service down after ~15 min idle and wakes it on
+the next visit (a few seconds of cold start). Your data is safe in Turso regardless.
 
-Then in `fly.toml` add:
+### Fly.io (needs CLI + token)
 
-```toml
-[mounts]
-  source = "focus_data"
-  destination = "/data"
+`fly.toml` is included (region `sea`, 1 GB volume at `/data`, scale-to-zero).
+`fly apps create`, `fly volumes create focusdesk_data --size 1`, `fly deploy`.
+Local-file mode is used (no Turso needed).
 
-[env]
-  DATA_DIR = "/data"
-```
+### Railway / any VPS via Docker
 
-```bash
-fly deploy
-```
-
-Fly's free allowance includes small volumes, so this is the cheapest way to run it
-with real persistence.
-
-### Any VPS via Docker
-
-```bash
-docker build -t focus-desk .
-docker run -d --name focus-desk \
-  -p 3000:3000 \
-  -v focus-desk-data:/data \
-  --restart unless-stopped \
-  focus-desk
-```
-
-Put it behind Caddy/Nginx for HTTPS (e.g. Caddy: `yourdomain.com { reverse_proxy localhost:3000 }`).
-Back up `/var/lib/docker/volumes/focus-desk-data/_data/focusdesk.db` (or wherever
-your volume lives) — it's a single file.
+The `Dockerfile` still works. For persistence without Turso, mount a volume at
+`/data` (local-file mode). Or set `TURSO_URL`/`TURSO_TOKEN` and skip the volume.
 
 ### Static-only alternative
 
