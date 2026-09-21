@@ -8,6 +8,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  @font-face{
+    font-family:"Dobole";
+    src:url("fonts/dobole-regular.woff2") format("woff2"),
+        url("fonts/dobole-regular.otf") format("opentype");
+    font-weight:400;font-style:normal;font-display:swap;
+  }
   :root{
     --bg:#FFFFFF; --card:#FFFFFF; --ink:#263238; --muted:#455A64;
     --line:#CFD8DC; --accent:#80CBC4; --accent-soft:#ECEFF1;
@@ -38,8 +44,8 @@
   .brand{width:52px;height:52px;border-radius:14px;object-fit:cover;flex:none;
     border:1px solid var(--line)}
   .title h1{
-    font-family:"Baloo 2","Inter",sans-serif;font-weight:800;
-    font-size:clamp(26px,7vw,38px);letter-spacing:-.01em;line-height:1.02;color:var(--ink);
+    font-family:"Dobole","Baloo 2","Inter",sans-serif;font-weight:400;
+    font-size:clamp(30px,8vw,44px);letter-spacing:.01em;line-height:1.02;color:var(--ink);
   }
   .title h1 .dot{color:var(--accent)}
   .head-right{
