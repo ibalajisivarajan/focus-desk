@@ -29,24 +29,29 @@
   .offline-banner[hidden]{display:none}
   .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 64px}
 
-  /* Header / dashboard */
+  /* Header / dashboard: one flex row — brand left, menu + meta stack right */
   header.dash{
-    display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;
-    margin-bottom:26px;
+    display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+    margin-bottom:18px;
   }
-  .title{display:flex;align-items:center;gap:14px}
+  .title{display:flex;align-items:center;gap:14px;min-width:0}
   .brand{width:52px;height:52px;border-radius:14px;object-fit:cover;flex:none;
     border:1px solid var(--line)}
   .title h1{
     font-family:"Baloo 2","Inter",sans-serif;font-weight:800;
-    font-size:clamp(28px,4vw,38px);letter-spacing:-.01em;line-height:1.1;color:var(--ink);
+    font-size:clamp(26px,7vw,38px);letter-spacing:-.01em;line-height:1.1;color:var(--ink);
+    white-space:nowrap;
   }
   .title h1 .dot{color:var(--accent)}
-  .title p{color:var(--muted);font-size:14px;margin-top:2px}
-  .stats{display:flex;gap:10px;flex-wrap:wrap}
+  .head-right{
+    display:flex;flex-direction:column;align-items:flex-end;gap:3px;
+    text-align:right;flex:none;
+  }
+  .head-meta{font-size:13px;color:var(--muted);font-weight:500;line-height:1.45;white-space:nowrap}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:26px}
   .stat{
     background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-    padding:10px 16px;box-shadow:var(--shadow);text-align:center;min-width:92px;
+    padding:10px 16px;box-shadow:var(--shadow);text-align:center;flex:1 1 0;min-width:0;
   }
   .stat b{
     display:block;font-family:"Baloo 2","Inter",sans-serif;font-size:22px;font-weight:800;
@@ -233,20 +238,18 @@
   /* Header user chip */
   .btn.small{padding:8px 14px;font-size:13px}
 
-  /* Header weather (compact line under the date) */
-  .title-text{min-width:0}
-  .weather-line{
-    display:inline-flex;align-items:center;gap:6px;max-width:100%;
-    font-size:13px;color:var(--muted);font-weight:500;text-align:left;
-    padding:3px 0;margin-top:2px;
+  /* Header weather/location (right-aligned stack, tappable) */
+  #weatherLine{
+    display:flex;flex-direction:column;align-items:flex-end;gap:1px;
+    font-size:13px;color:var(--muted);font-weight:500;text-align:right;
+    padding:2px 0;line-height:1.45;max-width:100%;
   }
-  .weather-line:hover{color:var(--ink)}
-  .weather-line-icon{width:18px;height:18px;border-radius:6px;object-fit:cover;flex:none}
-  #weatherLineText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .weather-lines{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
-  .weather-lines>span{min-width:0;max-width:100%}
-  .weather-loc-line{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .weather-edit{display:flex;gap:8px;margin-top:8px;max-width:380px}
+  #weatherLine:hover{color:var(--ink)}
+  #weatherLocLine,#weatherLineText{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62vw;
+  }
+  #weatherLineText{font-weight:600}
+  .weather-edit{display:flex;gap:8px;margin-top:6px;width:min(340px,72vw);justify-content:flex-end;flex-wrap:wrap}
   .weather-edit[hidden]{display:none}
   .weather-edit input{flex:1;min-width:0;font-size:13px;padding:8px 12px}
   .weather-edit .btn.small{white-space:nowrap}
@@ -348,38 +351,36 @@
   <header class="dash">
     <div class="title">
       <img class="brand" src="img/logo.png" alt="Focus Desk logo">
-      <div class="title-text">
-        <h1>Focus Desk<span class="dot">.</span></h1>
-        <p id="dateLine">—</p>
-        <button class="weather-line" id="weatherLine" aria-expanded="false" aria-controls="weatherEdit">
-          <img class="weather-line-icon" src="img/img-weather.png" alt="">
-          <span class="weather-lines">
-            <span id="weatherLineText">Locating…</span>
-            <span id="weatherLocLine" class="weather-loc-line" hidden></span>
-          </span>
-        </button>
-        <div class="weather-edit" id="weatherEdit" hidden>
-          <input type="text" id="weatherCity" placeholder="City, e.g. Langley" maxlength="80" aria-label="City for weather">
-          <button class="btn ghost small" id="weatherSet">Set</button>
-          <button class="btn ghost small" id="weatherLocate" aria-label="Use my location" title="Use my location">Locate</button>
-          <button class="unit-toggle" id="unitToggle" aria-label="Toggle temperature unit">°F</button>
+      <h1>Focus Desk<span class="dot">.</span></h1>
+    </div>
+    <div class="head-right">
+      <div class="menu-wrap" id="menuWrap">
+        <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-haspopup="menu" aria-expanded="false">⋯</button>
+        <div class="menu" id="menu" role="menu" hidden>
+          <div class="menu-label" id="menuHi">Hi</div>
+          <button id="profileBtn" role="menuitem">Profile</button>
+          <button id="signOut" role="menuitem">Sign out</button>
         </div>
       </div>
-    </div>
-    <div class="stats" aria-label="Today's summary">
-      <div class="stat"><b id="statTasks">0</b><span>tasks done</span></div>
-      <div class="stat"><b id="statHabits">0</b><span>habits checked</span></div>
-      <div class="stat"><b id="statFocus">0</b><span>min focused</span></div>
-    </div>
-    <div class="menu-wrap" id="menuWrap">
-      <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-haspopup="menu" aria-expanded="false">⋯</button>
-      <div class="menu" id="menu" role="menu" hidden>
-        <div class="menu-label" id="menuHi">Hi</div>
-        <button id="profileBtn" role="menuitem">Profile</button>
-        <button id="signOut" role="menuitem">Sign out</button>
+      <p class="head-meta" id="dateLine">—</p>
+      <button id="weatherLine" aria-expanded="false" aria-controls="weatherEdit" aria-label="Weather details">
+        <span id="weatherLocLine" hidden></span>
+        <span id="weatherLineText">Locating…</span>
+      </button>
+      <div class="weather-edit" id="weatherEdit" hidden>
+        <input type="text" id="weatherCity" placeholder="City, e.g. Langley" maxlength="80" aria-label="City for weather">
+        <button class="btn ghost small" id="weatherSet">Set</button>
+        <button class="btn ghost small" id="weatherLocate" aria-label="Use my location" title="Use my location">Locate</button>
+        <button class="unit-toggle" id="unitToggle" aria-label="Toggle temperature unit">°F</button>
       </div>
     </div>
   </header>
+
+  <div class="stats" aria-label="Today's summary">
+    <div class="stat"><b id="statTasks">0</b><span>tasks done</span></div>
+    <div class="stat"><b id="statHabits">0</b><span>habits checked</span></div>
+    <div class="stat"><b id="statFocus">0</b><span>min focused</span></div>
+  </div>
 
   <main class="grid">
 
@@ -590,8 +591,8 @@
   setInterval(trySync, 20000);
 
   /* ---------- dashboard header ---------- */
-  document.getElementById("dateLine").textContent = new Date().toLocaleDateString(undefined,
-    { weekday:"long", month:"long", day:"numeric" });
+  document.getElementById("dateLine").textContent = new Date().toLocaleDateString("en-US",
+    { weekday:"short", month:"short", day:"numeric" });
 
   function updateStats(){
     var s = state.stats || {};
@@ -1329,7 +1330,7 @@
     }
   }
 
-  // Line 2 under the date: "Langley, Canada · 9:32 AM local". Refreshed every minute.
+  // Header right side, under the date: "Langley · 1:08 PM". Refreshed every minute.
   function refreshLocLine(){
     if(!lastWeatherD || !lastWeatherCfg || lastWeatherCfg.lat === null){
       setWeatherLocLine("");
@@ -1337,7 +1338,7 @@
     }
     var label = lastWeatherCfg.label || tzLabel(lastWeatherD.timezone) || "Current location";
     var t = locLocalTime(lastWeatherD.utc_offset_seconds);
-    setWeatherLocLine(label + (t ? " · " + t + " local" : ""));
+    setWeatherLocLine(label + (t ? " · " + t : ""));
   }
 
   function renderWeather(d, cfg){
@@ -1351,14 +1352,10 @@
       return;
     }
     var cur = d.current || {};
-    var daily = d.daily || {};
     var w = WMO[cur.weather_code] || "";
     var unitSym = cfg.unit === "fahrenheit" ? "°F" : "°C";
     var parts = [Math.round(cur.temperature_2m) + unitSym];
     if(w) parts.push(w);
-    var hi = daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[0]) : null;
-    var lo = daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[0]) : null;
-    if(hi !== null && lo !== null) parts.push("H " + hi + "° L " + lo + "°");
     setWeatherLine(parts.join(" · "));
     refreshLocLine();
   }
