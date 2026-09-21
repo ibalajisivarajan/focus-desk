@@ -121,20 +121,24 @@ Google Cloud OAuth clients are free.
      automatically).
 
 The first Google sign-in creates an account; if it's the very first account
-on the server it adopts any pre-existing data, same as username signup.
+on the server it adopts any pre-existing data, same as email signup.
 Google-created accounts have no password and can only sign in via Google —
-until the owner sets one through the forgot-password flow, which also links
-both login methods to the same account. If the Google email is already
-registered (and Google verified it), the Google login links to that existing
-account automatically.
+until the owner sets one through the forgot-password flow, which emails a
+temporary password. If the Google email is already registered (and Google
+verified it), the Google login links to that existing account automatically.
 
-## Email: signup, verification, password reset (optional)
+## Email: signup, "account created" mail, forgot password (optional)
 
-New accounts sign up with an **email address** (plus a display name) and can
-sign in with email or username. The server sends a verification email on
-signup and powers **Forgot password?** reset links. Both only activate when
-outgoing email is configured — otherwise signup still works and the
-forgot-password link stays hidden.
+New accounts sign up with an **email address** (plus display name and
+password) and sign in with email or username. On signup the server sends an
+**"account created"** email (it doubles as the email-verification mail — the
+verification link inside lasts 24 hours). The **Forgot password?** link on
+the sign-in page emails a **temporary password**: the user signs in with it,
+then opens their **Profile** (top-right, next to the sign-out button) to set
+a real password. The Profile page also lets them edit their display name at
+any time. These email features only activate when outgoing email is
+configured — otherwise signup still works and the forgot-password link stays
+hidden.
 
 Free, no-credit-card option: send through your own Gmail account using an
 [app password](https://myaccount.google.com/apppasswords):
@@ -151,9 +155,11 @@ Free, no-credit-card option: send through your own Gmail account using an
      (Render redeploys automatically). Never paste the app password in chat —
      enter it directly in Render.
 
-Reset links expire after 1 hour and are single-use; verification links last
-24 hours. The forgot-password endpoint always responds the same way whether
-or not the email is registered, so it can't be used to probe for accounts.
+Temporary passwords are single-use in spirit (the app flags the account and
+prompts a real password change on next sign-in) and can't be requested more
+than 3 times per email per hour. The forgot-password endpoint always responds
+the same way whether or not the email is registered, so it can't be used to
+probe for accounts.
 
 ## Security notes
 
@@ -164,7 +170,8 @@ or not the email is registered, so it can't be used to probe for accounts.
 - All inputs validated (lengths, id format, `YYYY-MM-DD` dates, enum modes).
 - Auth: email/username + password (scrypt-hashed) or Google OAuth (ID token
   signature verified against Google's keys, CSRF state token, 15 s upstream
-  timeouts). Password-reset and email-verification tokens are single-use,
-  hashed at rest, and short-lived (1 h / 24 h). Sessions are HTTP-only
+  timeouts). Email-verification tokens are single-use, hashed at rest, and
+  short-lived (24 h); forgotten passwords are replaced by emailed temporary
+  passwords and flagged for change. Sessions are HTTP-only
   `SameSite=Lax` cookies, 30-day expiry.
 - Container runs as a non-root user; database lives on a mounted volume.

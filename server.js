@@ -8,7 +8,9 @@
 // Auth: email + password (scrypt-hashed) or Google OAuth, session cookie.
 // Every /api/* route except /api/auth/* requires a session, and all data is
 // scoped to the signed-in user. The first account created adopts any pre-auth
-// data. Password reset + email verification go out over SMTP when configured.
+// data. Signup sends an "account created" email; forgot-password emails a
+// temporary password. Both go out over SMTP when configured (Gmail SMTP with
+// a free app password — no credit card, no domain verification).
 
 import express from 'express';
 import helmet from 'helmet';
@@ -143,27 +145,25 @@ async function initDb() {
   }
   await client.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)');
 
-  // Email auth: verification flag + single-use token tables (idempotent).
-  try {
-    await client.execute({ sql: 'ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0', args: [] });
-  } catch (e) {
-    if (!/duplicate column/i.test(String(e && e.message))) throw e;
+  // Email auth: verification flag + single-use verification tokens.
+  // must_change_password marks accounts signed in with an emailed temporary
+  // password, so the UI can prompt a real password change (idempotent).
+  for (const col of ['email_verified INTEGER NOT NULL DEFAULT 0', 'must_change_password INTEGER NOT NULL DEFAULT 0']) {
+    try {
+      await client.execute({ sql: `ALTER TABLE users ADD COLUMN ${col}`, args: [] });
+    } catch (e) {
+      if (!/duplicate column/i.test(String(e && e.message))) throw e;
+    }
   }
   // SQLite unique indexes allow multiple NULLs, so legacy username-only
   // accounts are unaffected.
   await client.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
   await client.batch([
-    `CREATE TABLE IF NOT EXISTS password_resets (
-      token_hash TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires_at INTEGER NOT NULL
-    )`,
     `CREATE TABLE IF NOT EXISTS email_verifications (
       token_hash TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     )`,
-    'CREATE INDEX IF NOT EXISTS idx_resets_expires ON password_resets(expires_at)',
     'CREATE INDEX IF NOT EXISTS idx_verifications_expires ON email_verifications(expires_at)',
   ].map((sql) => ({ sql, args: [] })));
 
@@ -266,7 +266,7 @@ async function sessionUser(req) {
     await run('DELETE FROM sessions WHERE token = ?', token);
     return null;
   }
-  return get('SELECT id, name, email, email_verified FROM users WHERE id = ?', s.user_id);
+  return get('SELECT id, name, email, email_verified, must_change_password FROM users WHERE id = ?', s.user_id);
 }
 
 async function authRequired(req, res, next) {
@@ -332,10 +332,19 @@ async function sendMail(to, subject, text) {
   return false;
 }
 function verificationEmailBody(name, link) {
-  return `Hi ${name},\n\nPlease verify your Focus Desk email address by opening this link:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can ignore this email.\n`;
+  return `Hi ${name},\n\nYour Focus Desk account was created. Welcome!\n\nPlease verify your email address by opening this link:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can ignore this email.\n`;
 }
-function resetEmailBody(name, link) {
-  return `Hi ${name},\n\nSomeone requested a password reset for your Focus Desk account. Open this link to choose a new password:\n\n${link}\n\nThis link expires in 1 hour and can only be used once. If you didn't request this, you can safely ignore this email — your password won't change.\n`;
+// Temporary-password email for the forgot-password flow: readable, 10
+// characters, no lookalike glyphs (0/O, 1/l).
+function newTempPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(10);
+  let out = '';
+  for (const b of bytes) out += alphabet[b % alphabet.length];
+  return out;
+}
+function tempPasswordEmailBody(name, tempPassword) {
+  return `Hi ${name},\n\nYou asked for a temporary password for your Focus Desk account. Here it is:\n\n    ${tempPassword}\n\nSign in with this temporary password, then open your Profile and set a new password (you can also change your display name there).\n\nIf you didn't request this, you can safely ignore this email — but someone may have your address, so consider picking a fresh password once you're signed in.\n`;
 }
 // Extra throttle on email-triggering endpoints: max 3 sends per email/hour,
 // so one address can't be spammed through us. Best-effort in-memory.
@@ -526,10 +535,10 @@ app.post('/api/auth/signup', authLimiter, ah(async (req, res) => {
     await run('INSERT INTO email_verifications (token_hash, user_id, expires_at) VALUES (?,?,?)',
       tokenHash, id, now + 24 * 3600 * 1000);
     const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${token}`;
-    sendMail(email, 'Verify your Focus Desk email', verificationEmailBody(name, link));
+    sendMail(email, 'Your Focus Desk account was created', verificationEmailBody(name, link));
   }
   await createSession(req, res, id);
-  res.status(201).json({ ok: true, user: { id, name, email, email_verified: 0 } });
+  res.status(201).json({ ok: true, user: { id, name, email, email_verified: 0, must_change_password: 0 } });
 }));
 
 app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
@@ -539,15 +548,15 @@ app.post('/api/auth/login', authLimiter, ah(async (req, res) => {
     : (typeof b.name === 'string' ? b.name.trim() : '');
   const idLower = identifier.toLowerCase();
   const u = identifier ? await get(
-    'SELECT id, name, email, email_verified, pass_salt, pass_hash FROM users WHERE lower(email) = ? OR lower(name) = ?',
+    'SELECT id, name, email, email_verified, must_change_password, pass_salt, pass_hash FROM users WHERE lower(email) = ? OR lower(name) = ?',
     idLower, idLower) : null;
   // Google-created accounts have no password — they can only sign in via Google
-  // (until the owner sets a password through the reset flow).
+  // (until the owner sets one through the forgot-password or change-password flow).
   if (!u || !u.pass_hash || !(await verifyPassword(b.password || '', u.pass_salt, u.pass_hash))) {
     return res.status(401).json({ error: 'invalid email/username or password' });
   }
   await createSession(req, res, u.id);
-  res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, email_verified: u.email_verified } });
+  res.json({ ok: true, user: { id: u.id, name: u.name, email: u.email, email_verified: u.email_verified, must_change_password: u.must_change_password } });
 }));
 
 app.post('/api/auth/logout', ah(async (req, res) => {
@@ -557,45 +566,58 @@ app.post('/api/auth/logout', ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Forgot password: email a single-use reset link. Always responds the same
-// way so the endpoint can't be used to enumerate accounts.
+// Forgot password: email a temporary password and flag the account so the
+// UI prompts a real password change in Profile. Always responds the same way
+// so the endpoint can't be used to enumerate accounts.
 app.post('/api/auth/forgot-password', authLimiter, ah(async (req, res) => {
   const b = bodyOf(req);
   const email = typeof b.email === 'string' ? normalizeEmail(b.email) : '';
-  // Opportunistic cleanup of expired tokens.
-  run('DELETE FROM password_resets WHERE expires_at < ?', Date.now()).catch(() => {});
-  if (emailEnabled && validEmail(b.email) && emailThrottleOk('reset:' + email)) {
+  if (emailEnabled && validEmail(b.email) && emailThrottleOk('temppass:' + email)) {
     const u = await get('SELECT id, name, email FROM users WHERE email = ?', email);
     if (u && u.email) {
-      const { token, tokenHash } = newEmailToken();
-      const now = Date.now();
-      await run('DELETE FROM password_resets WHERE user_id = ?', u.id);
-      await run('INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?,?,?)',
-        tokenHash, u.id, now + 3600 * 1000);
-      const link = `${appBaseUrl(req)}/?reset_token=${token}`;
-      sendMail(u.email, 'Reset your Focus Desk password', resetEmailBody(u.name, link));
+      const temp = newTempPassword();
+      const { salt, hash } = await hashPassword(temp);
+      await run('UPDATE users SET pass_salt = ?, pass_hash = ?, must_change_password = 1 WHERE id = ?',
+        salt, hash, u.id);
+      sendMail(u.email, 'Your temporary Focus Desk password', tempPasswordEmailBody(u.name, temp));
     }
   }
-  res.json({ ok: true, message: 'If an account exists for that email, a reset link is on its way.' });
+  res.json({ ok: true, message: 'If an account exists for that email, a temporary password is on its way.' });
 }));
 
-// Redeem a reset link and set a new password. Single-use: the token is
-// deleted on success (and any older tokens for the user with it).
-app.post('/api/auth/reset-password', authLimiter, ah(async (req, res) => {
+// Change password from Profile (signed in): needs the current password
+// (unless the account has none, e.g. Google-only so far) and clears the
+// must_change_password flag.
+app.post('/api/auth/change-password', authLimiter, ah(async (req, res) => {
+  const user = await sessionUser(req);
+  if (!user) return res.status(401).json({ error: 'not signed in' });
   const b = bodyOf(req);
-  if (!validPassword(b.password)) return res.status(400).json({ error: 'password must be 8-128 characters' });
-  const token = typeof b.token === 'string' ? b.token.trim() : '';
-  if (!/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({ error: 'invalid or expired reset link' });
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const row = await get('SELECT user_id, expires_at FROM password_resets WHERE token_hash = ?', tokenHash);
-  if (!row || Number(row.expires_at) < Date.now()) {
-    if (row) await run('DELETE FROM password_resets WHERE token_hash = ?', tokenHash);
-    return res.status(400).json({ error: 'invalid or expired reset link' });
+  if (!validPassword(b.newPassword)) return res.status(400).json({ error: 'new password must be 8-128 characters' });
+  const full = await get('SELECT id, pass_salt, pass_hash FROM users WHERE id = ?', user.id);
+  if (full && full.pass_hash) {
+    if (!(await verifyPassword(b.currentPassword || '', full.pass_salt, full.pass_hash))) {
+      return res.status(401).json({ error: 'current password is incorrect' });
+    }
   }
-  const { salt, hash } = await hashPassword(b.password);
-  await run('UPDATE users SET pass_salt = ?, pass_hash = ? WHERE id = ?', salt, hash, row.user_id);
-  await run('DELETE FROM password_resets WHERE user_id = ?', row.user_id);
+  const { salt, hash } = await hashPassword(b.newPassword);
+  await run('UPDATE users SET pass_salt = ?, pass_hash = ?, must_change_password = 0 WHERE id = ?',
+    salt, hash, user.id);
   res.json({ ok: true });
+}));
+
+// Update the signed-in user's display name.
+app.patch('/api/auth/profile', authLimiter, ah(async (req, res) => {
+  const user = await sessionUser(req);
+  if (!user) return res.status(401).json({ error: 'not signed in' });
+  const b = bodyOf(req);
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!validName(name)) return res.status(400).json({ error: 'name must be 1-40 characters' });
+  if (await get('SELECT id FROM users WHERE lower(name) = lower(?) AND id <> ?', name, user.id)) {
+    return res.status(409).json({ error: 'that name is taken' });
+  }
+  await run('UPDATE users SET name = ? WHERE id = ?', name, user.id);
+  const updated = await sessionUser(req);
+  res.json({ ok: true, user: updated });
 }));
 
 // Email verification link (24h, single-use). Login never blocks on it.

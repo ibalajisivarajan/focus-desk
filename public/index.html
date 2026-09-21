@@ -180,6 +180,8 @@
     border-radius:10px;padding:10px 12px;
   }
   .auth-ok[hidden]{display:none}
+  .field-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:4px 0 -8px}
+  #profileEmail[readonly]{background:var(--bg);color:var(--muted);cursor:default}
   .linklike{
     background:none;border:0;color:var(--muted);text-decoration:underline;
     font-size:13px;padding:8px;cursor:pointer;font-family:inherit;
@@ -247,22 +249,33 @@
       <p class="auth-hint">Your data is private to your account.</p>
     </div>
     <div id="forgotView" hidden>
-      <p class="auth-sub">Enter your account email and we'll send you a reset link.</p>
+      <p class="auth-sub">Enter your account email and we'll send you a temporary password to sign in with.</p>
       <input type="email" id="forgotEmail" placeholder="Email address" maxlength="254" autocomplete="email">
       <div class="auth-error" id="forgotError" hidden></div>
       <div class="auth-ok" id="forgotOk" hidden></div>
-      <button class="btn" id="forgotGo">Send reset link</button>
+      <button class="btn" id="forgotGo">Send temporary password</button>
       <button class="linklike" id="forgotBack">← Back to sign in</button>
     </div>
-    <div id="resetView" hidden>
-      <p class="auth-sub">Choose a new password for your account.</p>
-      <input type="password" id="resetPass" placeholder="New password (8+ characters)" autocomplete="new-password">
-      <input type="password" id="resetPass2" placeholder="Confirm new password" autocomplete="new-password">
-      <div class="auth-error" id="resetError" hidden></div>
-      <div class="auth-ok" id="resetOk" hidden></div>
-      <button class="btn" id="resetGo">Set new password</button>
-      <button class="linklike" id="resetBack">← Back to sign in</button>
-    </div>
+  </div>
+</div>
+
+<div class="auth-overlay" id="profileOverlay" hidden>
+  <div class="auth-card">
+    <h1>Profile</h1>
+    <div class="auth-ok" id="profileBanner" hidden></div>
+    <label class="field-label">Display name</label>
+    <input type="text" id="profileName" maxlength="40" autocomplete="nickname">
+    <label class="field-label">Email</label>
+    <input type="email" id="profileEmail" readonly tabindex="-1">
+    <label class="field-label">Current password</label>
+    <input type="password" id="profileCurrent" placeholder="Current password" autocomplete="current-password">
+    <label class="field-label">New password</label>
+    <input type="password" id="profileNew" placeholder="New password (8+ characters)" autocomplete="new-password">
+    <input type="password" id="profileNew2" placeholder="Confirm new password" autocomplete="new-password">
+    <div class="auth-error" id="profileError" hidden></div>
+    <div class="auth-ok" id="profileOk" hidden></div>
+    <button class="btn" id="profileSave">Save changes</button>
+    <button class="linklike" id="profileClose">← Back to your desk</button>
   </div>
 </div>
 
@@ -280,6 +293,7 @@
     </div>
     <div class="userbox">
       <span class="username" id="userName"></span>
+      <button class="btn ghost small" id="profileBtn">Profile</button>
       <button class="btn ghost small" id="signOut">Sign out</button>
     </div>
   </header>
@@ -856,12 +870,10 @@
     el.hidden = false;
   }
   var emailSendingOn = false; // from /api/auth/providers: enables forgot-password UI
-  var pendingResetToken = null;
 
   function showAuthView(which){
     document.getElementById("authView").hidden = which !== "auth";
     document.getElementById("forgotView").hidden = which !== "forgot";
-    document.getElementById("resetView").hidden = which !== "reset";
   }
   function flash(msg, isErr){
     var d = document.createElement("div");
@@ -931,8 +943,12 @@
         setUser(r.body.user);
         hideAuth();
         loadState();
-        if(authMode === "signup" && emailSendingOn && signedUpEmail){
-          flash("Verification email sent to " + signedUpEmail);
+        if(authMode === "signup"){
+          flash(emailSendingOn && signedUpEmail
+            ? "Account created! A confirmation email is on its way to " + signedUpEmail
+            : "Account created — welcome!");
+        } else if(r.body.user && r.body.user.must_change_password){
+          openProfile("You signed in with a temporary password — please set a new one below.");
         }
       } else {
         showAuthError((r.body && r.body.error) || "Something went wrong — try again.");
@@ -959,7 +975,7 @@
       body: JSON.stringify({ email: email })
     }).then(function(res){ return res.json(); }).then(function(bd){
       go.disabled = false;
-      okEl.textContent = (bd && bd.message) || "If an account exists for that email, a reset link is on its way.";
+      okEl.textContent = (bd && bd.message) || "If an account exists for that email, a temporary password is on its way.";
       okEl.hidden = false;
     }).catch(function(){
       go.disabled = false;
@@ -968,42 +984,88 @@
     });
   }
 
-  function submitReset(){
-    var errEl = document.getElementById("resetError");
-    var okEl = document.getElementById("resetOk");
-    errEl.hidden = true; okEl.hidden = true;
-    var p1 = document.getElementById("resetPass").value;
-    var p2 = document.getElementById("resetPass2").value;
-    if(p1.length < 8){ errEl.textContent = "Password needs at least 8 characters."; errEl.hidden = false; return; }
-    if(p1 !== p2){ errEl.textContent = "Passwords don't match."; errEl.hidden = false; return; }
-    if(!pendingResetToken){ errEl.textContent = "This reset link is missing its token — request a new one."; errEl.hidden = false; return; }
-    var go = document.getElementById("resetGo");
+  function submitProfile(){
+    hideProfileMsgs();
+    var errEl = document.getElementById("profileError");
+    var okEl = document.getElementById("profileOk");
+    var fail = function(m){ errEl.textContent = m; errEl.hidden = false; };
+    var name = document.getElementById("profileName").value.trim();
+    var cur = document.getElementById("profileCurrent").value;
+    var np1 = document.getElementById("profileNew").value;
+    var np2 = document.getElementById("profileNew2").value;
+    var wantName = !currentUser || name !== currentUser.name;
+    var wantPass = np1.length > 0 || np2.length > 0 || cur.length > 0;
+    if(wantName && !name){ fail("Enter a display name."); return; }
+    if(wantPass){
+      if(np1.length < 8){ fail("New password needs at least 8 characters."); return; }
+      if(np1 !== np2){ fail("New passwords don't match."); return; }
+    }
+    if(!wantName && !wantPass){ okEl.textContent = "Nothing to change."; okEl.hidden = false; return; }
+    var go = document.getElementById("profileSave");
     go.disabled = true;
-    fetch("/api/auth/reset-password", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: pendingResetToken, password: p1 })
-    }).then(function(res){
-      return res.json().then(function(bd){ return { status: res.status, body: bd }; });
-    }).then(function(r){
+    var chain = Promise.resolve();
+    if(wantName){
+      chain = chain.then(function(){
+        return fetch("/api/auth/profile", {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name })
+        }).then(function(res){
+          return res.json().then(function(bd){ return { status: res.status, body: bd }; });
+        }).then(function(r){
+          if(r.status !== 200) throw new Error((r.body && r.body.error) || "Couldn't update your name.");
+          setUser(r.body.user);
+        });
+      });
+    }
+    if(wantPass){
+      chain = chain.then(function(){
+        return fetch("/api/auth/change-password", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ currentPassword: cur, newPassword: np1 })
+        }).then(function(res){
+          return res.json().then(function(bd){ return { status: res.status, body: bd }; });
+        }).then(function(r){
+          if(r.status !== 200) throw new Error((r.body && r.body.error) || "Couldn't change your password.");
+          if(currentUser) currentUser.must_change_password = 0;
+        });
+      });
+    }
+    chain.then(function(){
       go.disabled = false;
-      if(r.status === 200){
-        pendingResetToken = null;
-        document.getElementById("resetPass").value = "";
-        document.getElementById("resetPass2").value = "";
-        okEl.textContent = "Password updated — sign in with your new password.";
-        okEl.hidden = false;
-      } else {
-        errEl.textContent = (r.body && r.body.error) || "Something went wrong — try again.";
-        errEl.hidden = false;
-      }
-    }).catch(function(){
+      document.getElementById("profileCurrent").value = "";
+      document.getElementById("profileNew").value = "";
+      document.getElementById("profileNew2").value = "";
+      document.getElementById("profileBanner").hidden = true;
+      okEl.textContent = "Profile updated ✓";
+      okEl.hidden = false;
+    }).catch(function(e){
       go.disabled = false;
-      errEl.textContent = "Can't reach the server — check your connection.";
-      errEl.hidden = false;
+      fail(e && e.message ? e.message : "Something went wrong — try again.");
     });
   }
+
+  function hideProfileMsgs(){
+    document.getElementById("profileError").hidden = true;
+    document.getElementById("profileOk").hidden = true;
+  }
+  function openProfile(bannerMsg){
+    if(!currentUser) return;
+    hideProfileMsgs();
+    document.getElementById("profileName").value = currentUser.name || "";
+    document.getElementById("profileEmail").value = currentUser.email || "No email on this account";
+    document.getElementById("profileCurrent").value = "";
+    document.getElementById("profileNew").value = "";
+    document.getElementById("profileNew2").value = "";
+    var banner = document.getElementById("profileBanner");
+    if(bannerMsg){ banner.textContent = bannerMsg; banner.hidden = false; }
+    else banner.hidden = true;
+    document.getElementById("profileOverlay").hidden = false;
+  }
+  function closeProfile(){ document.getElementById("profileOverlay").hidden = true; }
 
   document.getElementById("tabSignin").addEventListener("click", function(){ setAuthMode("signin"); });
   document.getElementById("tabSignup").addEventListener("click", function(){ setAuthMode("signup"); });
@@ -1015,8 +1077,9 @@
   document.getElementById("forgotBack").addEventListener("click", function(){ setAuthMode("signin"); });
   document.getElementById("forgotGo").addEventListener("click", submitForgot);
   document.getElementById("forgotEmail").addEventListener("keydown", function(e){ if(e.key === "Enter") submitForgot(); });
-  document.getElementById("resetBack").addEventListener("click", function(){ pendingResetToken = null; setAuthMode("signin"); });
-  document.getElementById("resetGo").addEventListener("click", submitReset);
+  document.getElementById("profileBtn").addEventListener("click", function(){ openProfile(); });
+  document.getElementById("profileClose").addEventListener("click", closeProfile);
+  document.getElementById("profileSave").addEventListener("click", submitProfile);
   document.getElementById("signOut").addEventListener("click", function(){
     fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).then(function(){
       setUser(null);
@@ -1187,29 +1250,28 @@
 
   /* ---------- boot ---------- */
   function boot(){
-    // Password-reset links (/?reset_token=…) and email-verification results
-    // (/?verified=1|0) land here. Clean them out of the URL right away.
+    // Email-verification results (/?verified=1|0) land here. Clean them out
+    // of the URL right away.
     var qs = null;
     try{ qs = new URLSearchParams(window.location.search); }catch(e){}
-    var resetToken = qs ? qs.get("reset_token") : null;
     var verified = qs ? qs.get("verified") : null;
-    if(qs && (qs.has("reset_token") || qs.has("verified"))){
+    if(qs && qs.has("verified")){
       try{ window.history.replaceState({}, "", window.location.pathname); }catch(e){}
     }
-    if(resetToken) pendingResetToken = resetToken;
     if(verified === "1") flash("Email verified ✓");
     else if(verified === "0") flash("That verification link was invalid or expired.", true);
     fetch("/api/auth/me", { credentials: "same-origin" }).then(function(res){
       if(res.ok){
         return res.json().then(function(b){
           setUser(b.user); hideAuth(); loadState();
-          if(pendingResetToken){ showAuth(); showAuthView("reset"); }
+          if(b.user && b.user.must_change_password){
+            openProfile("You signed in with a temporary password — please set a new one below.");
+          }
         });
       }
       if(res.status === 401){
         showAuth();
-        if(pendingResetToken) showAuthView("reset");
-        else setAuthMode("signin");
+        setAuthMode("signin");
         return;
       }
       loadState();
