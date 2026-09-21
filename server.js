@@ -1,0 +1,285 @@
+// Focus Desk — hosted backend.
+// Node.js + Express + built-in node:sqlite. Single SQLite file, no native modules.
+
+import express from 'express';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { DatabaseSync } from 'node:sqlite';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number.parseInt(process.env.PORT || '3000', 10);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'focusdesk.db');
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+/* ---------------- database ---------------- */
+const db = new DatabaseSync(DB_PATH);
+db.exec('PRAGMA journal_mode = WAL;');
+db.exec('PRAGMA foreign_keys = ON;');
+db.exec(`
+CREATE TABLE IF NOT EXISTS todos (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0,
+  done_at TEXT,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS habits (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS habit_marks (
+  habit_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  PRIMARY KEY (habit_id, day),
+  FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  text TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS focus_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mode TEXT NOT NULL,
+  minutes INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_todos_done ON todos(done, done_at);
+CREATE INDEX IF NOT EXISTS idx_marks_day ON habit_marks(day);
+CREATE INDEX IF NOT EXISTS idx_focus_day ON focus_sessions(day);
+`);
+db.prepare('INSERT OR IGNORE INTO notes (id, text, updated_at) VALUES (1, ?, ?)').run('', Date.now());
+
+/* ---------------- helpers ---------------- */
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MODES = new Set(['focus', 'short', 'long']);
+
+function todayStr(d = new Date()) {
+  const m = d.getMonth() + 1, day = d.getDate();
+  return `${d.getFullYear()}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+function uid() {
+  return 'id' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+function validId(v) { return typeof v === 'string' && ID_RE.test(v); }
+function validDay(v) { return typeof v === 'string' && DAY_RE.test(v); }
+function bodyOf(req) { return req.body && typeof req.body === 'object' ? req.body : {}; }
+
+function getStats(day) {
+  const tasksDone = db.prepare('SELECT COUNT(*) AS c FROM todos WHERE done = 1 AND done_at = ?').get(day).c;
+  const habitsChecked = db.prepare('SELECT COUNT(DISTINCT habit_id) AS c FROM habit_marks WHERE day = ?').get(day).c;
+  const habitsTotal = db.prepare('SELECT COUNT(*) AS c FROM habits').get().c;
+  const f = db.prepare('SELECT COALESCE(SUM(minutes),0) AS minutes, COUNT(*) AS sessions FROM focus_sessions WHERE day = ?').get(day);
+  return { tasksDone, habitsChecked, habitsTotal, focusMinutes: f.minutes, focusSessions: f.sessions };
+}
+
+function streakOf(habitId) {
+  const has = db.prepare('SELECT 1 FROM habit_marks WHERE habit_id = ? AND day = ?');
+  let streak = 0;
+  const d = new Date();
+  if (!has.get(habitId, todayStr(d))) d.setDate(d.getDate() - 1);
+  while (has.get(habitId, todayStr(d))) { streak++; d.setDate(d.getDate() - 1); }
+  return streak;
+}
+
+function todoRow(id) {
+  return db.prepare('SELECT id, text, done, done_at AS doneAt FROM todos WHERE id = ?').get(id);
+}
+
+function habitRow(id) {
+  const h = db.prepare('SELECT id, name FROM habits WHERE id = ?').get(id);
+  if (!h) return null;
+  const marks = {};
+  for (const m of db.prepare("SELECT day FROM habit_marks WHERE habit_id = ? AND day >= date('now','-13 days')").all(id)) {
+    marks[m.day] = 1;
+  }
+  return { id: h.id, name: h.name, marks, streak: streakOf(id) };
+}
+
+/* ---------------- app ---------------- */
+const app = express();
+
+// Security headers. CSP allows the app's own inline <style>/<script>
+// (single-file frontend), nothing else.
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
+app.use(express.json({ limit: '256kb' }));
+
+// Rate-limit the API only (health checks and static files stay unrestricted).
+app.use('/api/', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 600,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'too many requests, slow down' },
+}));
+
+app.get('/healthz', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+
+/* ---- combined state (what the frontend boots from) ---- */
+app.get('/api/state', (req, res) => {
+  const day = todayStr();
+  const todos = db.prepare('SELECT id, text, done, done_at AS doneAt FROM todos ORDER BY position DESC, created_at DESC').all();
+  const habits = db.prepare('SELECT id FROM habits ORDER BY created_at ASC, rowid ASC').all().map(h => habitRow(h.id));
+  const notes = db.prepare('SELECT text FROM notes WHERE id = 1').get();
+  res.json({ todos, habits, notes: notes ? notes.text : '', stats: getStats(day) });
+});
+
+/* ---- todos ---- */
+app.post('/api/todos', (req, res) => {
+  const b = bodyOf(req);
+  const text = typeof b.text === 'string' ? b.text.trim() : '';
+  if (!text || text.length > 200) return res.status(400).json({ error: 'text must be 1-200 characters' });
+  let id = b.id;
+  if (id !== undefined && !validId(id)) return res.status(400).json({ error: 'invalid id' });
+  if (!id) id = uid();
+  const pos = (db.prepare('SELECT COALESCE(MAX(position),0) AS m FROM todos').get().m || 0) + 1;
+  db.prepare('INSERT INTO todos (id, text, done, done_at, position, created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING')
+    .run(id, text, 0, null, pos, Date.now());
+  res.status(201).json(todoRow(id));
+});
+
+app.patch('/api/todos/:id', (req, res) => {
+  const { id } = req.params;
+  if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
+  if (!db.prepare('SELECT id FROM todos WHERE id = ?').get(id)) return res.status(404).json({ error: 'not found' });
+  const b = bodyOf(req);
+  const sets = [], vals = [];
+  if (typeof b.text === 'string') {
+    const t = b.text.trim();
+    if (!t || t.length > 200) return res.status(400).json({ error: 'text must be 1-200 characters' });
+    sets.push('text = ?'); vals.push(t);
+  }
+  if (typeof b.done === 'boolean') {
+    sets.push('done = ?', 'done_at = ?');
+    vals.push(b.done ? 1 : 0, b.done ? todayStr() : null);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+  db.prepare(`UPDATE todos SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
+  res.json(todoRow(id));
+});
+
+app.delete('/api/todos/:id', (req, res) => {
+  const { id } = req.params;
+  if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
+  const r = db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+  if (r.changes === 0) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
+});
+
+/* ---- habits ---- */
+app.post('/api/habits', (req, res) => {
+  const b = bodyOf(req);
+  const name = typeof b.name === 'string' ? b.name.trim() : '';
+  if (!name || name.length > 80) return res.status(400).json({ error: 'name must be 1-80 characters' });
+  let id = b.id;
+  if (id !== undefined && !validId(id)) return res.status(400).json({ error: 'invalid id' });
+  if (!id) id = uid();
+  db.prepare('INSERT INTO habits (id, name, created_at) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING')
+    .run(id, name, Date.now());
+  res.status(201).json(habitRow(id));
+});
+
+app.delete('/api/habits/:id', (req, res) => {
+  const { id } = req.params;
+  if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
+  const changes = db.transaction(() => {
+    db.prepare('DELETE FROM habit_marks WHERE habit_id = ?').run(id);
+    return db.prepare('DELETE FROM habits WHERE id = ?').run(id).changes;
+  })();
+  if (changes === 0) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
+});
+
+app.post('/api/habits/:id/checkin', (req, res) => {
+  const { id } = req.params;
+  if (!validId(id)) return res.status(400).json({ error: 'invalid id' });
+  if (!db.prepare('SELECT id FROM habits WHERE id = ?').get(id)) return res.status(404).json({ error: 'not found' });
+  const b = bodyOf(req);
+  let day = b.day;
+  if (day === undefined || day === null) day = todayStr();
+  if (!validDay(day)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
+  const exists = db.prepare('SELECT 1 FROM habit_marks WHERE habit_id = ? AND day = ?').get(id, day);
+  let done;
+  if (exists) {
+    db.prepare('DELETE FROM habit_marks WHERE habit_id = ? AND day = ?').run(id, day);
+    done = false;
+  } else {
+    db.prepare('INSERT INTO habit_marks (habit_id, day) VALUES (?,?)').run(id, day);
+    done = true;
+  }
+  res.json({ ok: true, id, day, done, streak: streakOf(id), stats: getStats(todayStr()) });
+});
+
+/* ---- notes ---- */
+app.get('/api/notes', (req, res) => {
+  const n = db.prepare('SELECT text, updated_at AS updatedAt FROM notes WHERE id = 1').get();
+  res.json({ text: n ? n.text : '', updatedAt: n ? n.updatedAt : null });
+});
+
+app.put('/api/notes', (req, res) => {
+  const b = bodyOf(req);
+  const text = typeof b.text === 'string' ? b.text : null;
+  if (text === null || text.length > 200000) return res.status(400).json({ error: 'text must be a string up to 200000 characters' });
+  const now = Date.now();
+  db.prepare(`INSERT INTO notes (id, text, updated_at) VALUES (1, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at`)
+    .run(text, now);
+  res.json({ ok: true, updatedAt: now });
+});
+
+/* ---- focus sessions ---- */
+app.post('/api/focus/sessions', (req, res) => {
+  const b = bodyOf(req);
+  if (!MODES.has(b.mode)) return res.status(400).json({ error: 'mode must be focus, short, or long' });
+  if (!Number.isInteger(b.minutes) || b.minutes < 0 || b.minutes > 480) {
+    return res.status(400).json({ error: 'minutes must be an integer 0-480' });
+  }
+  const day = todayStr();
+  const r = db.prepare('INSERT INTO focus_sessions (mode, minutes, day, created_at) VALUES (?,?,?,?)')
+    .run(b.mode, b.minutes, day, Date.now());
+  res.status(201).json({ ok: true, id: r.lastInsertRowid, stats: getStats(day) });
+});
+
+app.get('/api/focus/stats', (req, res) => {
+  let day = req.query.day;
+  if (day === undefined) day = todayStr();
+  if (!validDay(day)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
+  res.json({ day, ...getStats(day) });
+});
+
+/* ---- frontend + errors ---- */
+app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid JSON' });
+  console.error(err);
+  res.status(500).json({ error: 'internal error' });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Focus Desk listening on :${PORT}`);
+  console.log(`Database: ${DB_PATH}`);
+});

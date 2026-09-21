@@ -1,0 +1,18 @@
+# Render one-click deploy: https://render.com → New → Blueprint → point at your repo.
+services:
+  - type: web
+    name: focus-desk
+    runtime: docker
+    # Note: Render disks (needed for SQLite persistence) require a paid instance.
+    # Use "starter" so /data survives restarts. The free plan works for a demo,
+    # but the database is wiped on every restart/redeploy there.
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: focus-desk-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      # Render injects PORT automatically at runtime; the server reads it.
+      - key: DATA_DIR
+        value: /data

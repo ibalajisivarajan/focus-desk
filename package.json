@@ -1,0 +1,1 @@
+{"dependencies":{"express":"^4.21.2","express-rate-limit":"^8.1.0","helmet":"^8.0.0"},"description":"Focus Desk — self-hostable productivity app with server-side SQLite storage","engines":{"node":">=22.13"},"main":"server.js","name":"focus-desk-hosted","scripts":{"start":"node server.js"},"type":"module","version":"1.0.0"}
